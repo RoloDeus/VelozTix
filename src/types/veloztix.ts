@@ -69,6 +69,9 @@ export interface PagoMovilInstructions {
   ttlSeconds: number;
 }
 
+export const FLAT_FEE_PER_TICKET_USD = 0.2; // Tarifa plana fija de $0.20 USD por cada entrada vendida
+export const BCV_RATE_BS = 45.0;
+
 export interface TicketOrder {
   id: string; // Ej: VT-84920
   eventId: string;
@@ -79,10 +82,11 @@ export interface TicketOrder {
   posterTheme: PosterTheme;
   quantity: number;
   unitPriceUsd: number;
+  subtotalTicketsUsd: number;
+  flatFeeUsd: number; // $0.20 USD × cantidad de entradas
   totalUsd: number;
   totalBs: number;
-  commissionUsd: number; // 4.5%
-  netOrganizerUsd: number; // 95.5%
+  netOrganizerUsd: number; // Monto neto liquidado al organizador
   status: OrderCommercialStatus;
   createdAtIso: string;
   buyerName: string;
@@ -110,6 +114,8 @@ export interface ReconciliationRow {
   quantity: number;
   amountUsd: number;
   amountBs: number;
+  flatFeeUsd: number;
+  netOrganizerUsd: number;
   paymentRef: string;
   state: ReconciliationRowState;
   note: string;

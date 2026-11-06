@@ -8,7 +8,12 @@ import {
   QrCode,
   Smartphone,
 } from 'lucide-react';
-import { BuyerCheckoutForm, EventItem } from '../types/veloztix';
+import {
+  BCV_RATE_BS,
+  BuyerCheckoutForm,
+  EventItem,
+  FLAT_FEE_PER_TICKET_USD,
+} from '../types/veloztix';
 import { EventPosterArt } from '../components/EventPosterArt';
 import { maskCedula } from '../utils/privacyCrypto';
 
@@ -41,8 +46,12 @@ export const BuyerCheckoutView: React.FC<BuyerCheckoutViewProps> = ({
 }) => {
   const [validationError, setValidationError] = useState<string | null>(null);
 
-  const totalUsd = Number((quantity * event.priceUsd).toFixed(2));
-  const totalBs = Number((quantity * event.priceBs).toFixed(2));
+  const subtotalUsd = Number((quantity * event.priceUsd).toFixed(2));
+  const flatFeeUsd = Number(
+    (quantity * FLAT_FEE_PER_TICKET_USD).toFixed(2)
+  );
+  const totalUsd = Number((subtotalUsd + flatFeeUsd).toFixed(2));
+  const totalBs = Number((totalUsd * BCV_RATE_BS).toFixed(2));
 
   const maskedPreview = form.cedulaDigits
     ? maskCedula(form.docPrefix, form.cedulaDigits)
@@ -334,7 +343,17 @@ export const BuyerCheckoutView: React.FC<BuyerCheckoutViewProps> = ({
                   {quantity} × Entrada General (${event.priceUsd.toFixed(2)})
                 </span>
                 <span className="font-semibold text-white">
-                  ${totalUsd.toFixed(2)}
+                  ${subtotalUsd.toFixed(2)}
+                </span>
+              </div>
+
+              <div className="flex justify-between text-zinc-300">
+                <span>
+                  Comisión fija por entrada (${FLAT_FEE_PER_TICKET_USD.toFixed(2)}{' '}
+                  × {quantity})
+                </span>
+                <span className="font-semibold text-white">
+                  ${flatFeeUsd.toFixed(2)}
                 </span>
               </div>
 
@@ -344,7 +363,7 @@ export const BuyerCheckoutView: React.FC<BuyerCheckoutViewProps> = ({
               </div>
 
               <div className="flex items-baseline justify-between border-t border-zinc-800 pt-3">
-                <span className="text-base font-bold text-white">Total</span>
+                <span className="text-base font-bold text-white">Total a pagar</span>
                 <div className="text-right">
                   <span className="block text-2xl font-extrabold text-emerald-400">
                     Bs. {totalBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })}
@@ -354,6 +373,11 @@ export const BuyerCheckoutView: React.FC<BuyerCheckoutViewProps> = ({
                   </span>
                 </div>
               </div>
+
+              <p className="pt-1 text-xs leading-relaxed text-zinc-400">
+                Tarifa plana fija de <strong className="text-zinc-200">$0.20 USD</strong>{' '}
+                por cada entrada vendida, sin cargos porcentuales.
+              </p>
             </div>
           </div>
         </div>

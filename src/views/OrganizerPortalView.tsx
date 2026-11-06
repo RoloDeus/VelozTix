@@ -158,15 +158,21 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
       {/* Cabecera del Portal Organizador */}
       <div className="flex flex-wrap items-center justify-between gap-4 rounded-3xl border border-zinc-800 bg-zinc-900/90 p-6 sm:p-8">
         <div>
-          <span className="text-xs font-semibold uppercase tracking-wider text-violet-400">
-            Panel de Gestión Comercial
-          </span>
-          <h1 className="mt-1 text-2xl font-extrabold text-white sm:text-3xl">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-semibold uppercase tracking-wider text-violet-400">
+              Panel de Gestión Comercial
+            </span>
+            <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-300">
+              <Sparkles className="h-3 w-3" />
+              Suscripción SaaS Pro Activa · Tarifa fija $0.20 USD / entrada
+            </span>
+          </div>
+          <h1 className="mt-1.5 text-2xl font-extrabold text-white sm:text-3xl">
             Portal del Organizador
           </h1>
           <p className="mt-1 text-sm text-zinc-400">
             Administra tus eventos, revisa tus ventas en vivo y consulta el cierre de
-            pagos de tu taquilla.
+            pagos de tu taquilla con comisión plana por boleto.
           </p>
         </div>
 
@@ -292,10 +298,10 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
                         style={{ width: `${soldPct}%` }}
                       />
                     </div>
-                    <div className="mt-2 flex items-center justify-between text-xs text-zinc-400">
+                    <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-zinc-400">
                       <span>
-                        Precio: <strong className="text-white">${ev.priceUsd.toFixed(2)}</strong>{' '}
-                        (Bs. {ev.priceBs.toFixed(0)})
+                        Entrada: <strong className="text-white">${ev.priceUsd.toFixed(2)}</strong>{' '}
+                        + <span className="text-violet-300">$0.20 tarifa fija</span>
                       </span>
                       {ev.reservedCount > 0 && (
                         <span className="text-amber-300">
@@ -512,33 +518,35 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
                 Bs.{' '}
                 {reconciliation.grossBs.toLocaleString('es-VE', {
                   minimumFractionDigits: 2,
-                })}
+                })}{' '}
+                · {reconciliation.reconciledTicketsCount} entradas conciliadas
               </p>
             </div>
 
             <div className="rounded-3xl border border-zinc-800 bg-zinc-900/90 p-6">
               <div className="flex items-center justify-between text-xs font-semibold text-zinc-400">
-                <span>Comisión VelozTix (4.5%)</span>
+                <span>Tarifa plana VelozTix ($0.20 / entrada)</span>
                 <Ticket className="h-4 w-4 text-violet-400" />
               </div>
               <p className="mt-3 text-3xl font-extrabold text-violet-300">
-                -${reconciliation.veloztixFeeUsd.toFixed(2)}
+                -${reconciliation.veloztixFlatFeeUsd.toFixed(2)}
               </p>
               <p className="mt-1 text-xs text-zinc-400">
-                Sin cargos fijos adicionales por entrada
+                {reconciliation.reconciledTicketsCount} entradas × $0.20 USD fijo (sin %
+                variable)
               </p>
             </div>
 
             <div className="rounded-3xl border border-emerald-500/35 bg-gradient-to-br from-emerald-950/30 to-zinc-900 p-6">
               <div className="flex items-center justify-between text-xs font-semibold text-emerald-300">
-                <span>Monto neto liquidado (95.5%)</span>
+                <span>Monto neto liquidado al organizador</span>
                 <Wallet className="h-4 w-4 text-emerald-400" />
               </div>
               <p className="mt-3 text-3xl font-extrabold text-emerald-400">
                 ${reconciliation.netOrganizerUsd.toFixed(2)}
               </p>
               <p className="mt-1 text-xs text-zinc-300">
-                Disponible para cierre del evento
+                100% del valor nominal de las entradas vendidas
               </p>
             </div>
           </div>
@@ -551,8 +559,8 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
                   Cuadre de Pagos Móviles vs. Entradas Emitidas
                 </h2>
                 <p className="mt-0.5 text-xs text-zinc-400">
-                  Verifica que cada pago recibido tenga su entrada digital entregada al
-                  comprador.
+                  Compara cada Pago Móvil recibido contra las entradas entregadas y
+                  aplica la tarifa fija de $0.20 USD por boleto.
                 </p>
               </div>
 
@@ -575,7 +583,8 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
                 <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-400" />
                 <span>
                   <strong>¡Cierre cuadrado al 100%!</strong> Todas las órdenes cobradas por
-                  Pago Móvil coinciden exactamente con las entradas emitidas.
+                  Pago Móvil coinciden con las entradas emitidas bajo la tarifa fija de
+                  $0.20 USD por ticket.
                 </span>
               </div>
             ) : (
@@ -590,13 +599,13 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
 
             {/* Tabla limpia de órdenes conciliadas */}
             <div className="mt-5 overflow-x-auto rounded-2xl border border-zinc-800">
-              <table className="w-full min-w-[720px] border-collapse text-left text-sm">
+              <table className="w-full min-w-[780px] border-collapse text-left text-sm">
                 <thead>
                   <tr className="border-b border-zinc-800 bg-zinc-950 text-xs font-semibold uppercase tracking-wider text-zinc-400">
                     <th className="px-4 py-3.5">Orden</th>
                     <th className="px-4 py-3.5">Evento &amp; Comprador</th>
                     <th className="px-4 py-3.5">Referencia Pago Móvil</th>
-                    <th className="px-4 py-3.5">Monto</th>
+                    <th className="px-4 py-3.5">Cobrado / Tarifa Fija / Neto</th>
                     <th className="px-4 py-3.5 text-right">Estado del Cuadre</th>
                   </tr>
                 </thead>
@@ -617,12 +626,16 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
                         {row.paymentRef}
                       </td>
                       <td className="px-4 py-3.5">
-                        <span className="font-bold text-white">
-                          ${row.amountUsd.toFixed(2)}
-                        </span>
-                        <span className="ml-1.5 text-xs text-zinc-400">
-                          (Bs. {row.amountBs.toFixed(0)})
-                        </span>
+                        <div className="font-bold text-white">
+                          ${row.amountUsd.toFixed(2)}{' '}
+                          <span className="text-xs font-normal text-zinc-400">
+                            (Bs. {row.amountBs.toFixed(0)})
+                          </span>
+                        </div>
+                        <div className="mt-0.5 text-xs text-zinc-400">
+                          Tarifa: <span className="text-violet-300">-${row.flatFeeUsd.toFixed(2)}</span>{' '}
+                          · Neto: <span className="font-semibold text-emerald-400">${row.netOrganizerUsd.toFixed(2)}</span>
+                        </div>
                       </td>
                       <td className="px-4 py-3.5 text-right">
                         {row.state === 'matched' ? (
@@ -654,6 +667,29 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
       {/* ===================================================================== */}
       {activeTab === 'analytics' && (
         <div className="space-y-6">
+          {/* Banner de Suscripción SaaS Pro */}
+          <div className="flex flex-wrap items-center justify-between gap-4 rounded-3xl border border-violet-500/35 bg-gradient-to-r from-violet-950/45 via-zinc-900 to-emerald-950/30 p-5 sm:px-6">
+            <div className="flex items-center gap-3.5">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-violet-500/20 text-emerald-400">
+                <Sparkles className="h-5 w-5" />
+              </div>
+              <div>
+                <h2 className="text-base font-bold text-white">
+                  Suscripción Organizadora VelozTix Pro (SaaS Activo)
+                </h2>
+                <p className="mt-0.5 text-xs text-zinc-300">
+                  Accede a inteligencia de audiencia en vivo y protección anti-reventa
+                  manteniendo nuestra tarifa plana de solo{' '}
+                  <strong className="text-emerald-400">$0.20 USD fijos</strong> por cada
+                  entrada vendida.
+                </p>
+              </div>
+            </div>
+            <span className="rounded-xl border border-emerald-500/30 bg-emerald-500/15 px-3.5 py-1.5 text-xs font-bold text-emerald-300">
+              Plan Pro Habilitado
+            </span>
+          </div>
+
           {/* 4 Tarjetas Comerciales Simples y Claras */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <div className="rounded-3xl border border-zinc-800 bg-zinc-900/90 p-5">

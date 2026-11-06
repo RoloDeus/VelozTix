@@ -12,7 +12,12 @@ import {
   Ticket,
   Users,
 } from 'lucide-react';
-import { EventCategory, EventItem } from '../types/veloztix';
+import {
+  BCV_RATE_BS,
+  EventCategory,
+  EventItem,
+  FLAT_FEE_PER_TICKET_USD,
+} from '../types/veloztix';
 import { EventPosterArt } from '../components/EventPosterArt';
 
 interface CatalogViewProps {
@@ -54,8 +59,14 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
   // MODO DETALLE DEL EVENTO
   // ==========================================================================
   if (selectedEvent) {
-    const totalUsd = Number((ticketQty * selectedEvent.priceUsd).toFixed(2));
-    const totalBs = Number((ticketQty * selectedEvent.priceBs).toFixed(2));
+    const subtotalUsd = Number(
+      (ticketQty * selectedEvent.priceUsd).toFixed(2)
+    );
+    const flatFeeUsd = Number(
+      (ticketQty * FLAT_FEE_PER_TICKET_USD).toFixed(2)
+    );
+    const totalUsd = Number((subtotalUsd + flatFeeUsd).toFixed(2));
+    const totalBs = Number((totalUsd * BCV_RATE_BS).toFixed(2));
 
     return (
       <div className="space-y-6">
@@ -223,12 +234,17 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
                     {ticketQty === 1 ? 'Entrada General' : 'Entradas Generales'}
                   </span>
                   <span className="font-medium text-zinc-200">
-                    ${totalUsd.toFixed(2)}
+                    ${subtotalUsd.toFixed(2)}
                   </span>
                 </div>
                 <div className="flex justify-between text-sm text-zinc-400">
-                  <span>Cargo por servicio al comprador</span>
-                  <span className="font-semibold text-emerald-400">Gratis</span>
+                  <span>
+                    Tarifa fija de servicio (${FLAT_FEE_PER_TICKET_USD.toFixed(2)}{' '}
+                    × {ticketQty})
+                  </span>
+                  <span className="font-medium text-zinc-200">
+                    ${flatFeeUsd.toFixed(2)}
+                  </span>
                 </div>
                 <div className="flex items-baseline justify-between border-t border-zinc-800 pt-3">
                   <span className="text-base font-bold text-white">Total a pagar</span>
@@ -254,7 +270,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
               </button>
 
               <p className="mt-3 text-center text-xs text-zinc-500">
-                Pago Móvil rápido · Recibes tu código QR al instante
+                Tarifa plana fija de $0.20 USD por entrada · Pago Móvil instantáneo
               </p>
             </div>
           </div>

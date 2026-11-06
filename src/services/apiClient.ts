@@ -1,8 +1,10 @@
 import {
+  BCV_RATE_BS,
   BehavioralTelemetryVector,
   BuyerCheckoutForm,
   CreateNewEventInput,
   EventItem,
+  FLAT_FEE_PER_TICKET_USD,
   PosterTheme,
   ReconciliationRow,
   TicketOrder,
@@ -15,9 +17,6 @@ import {
   maskPhone,
 } from '../utils/privacyCrypto';
 import { evaluateSilentTelemetry } from '../utils/aiScoringEngine';
-
-const BCV_RATE_BS = 45.0;
-const VELOZTIX_FEE_PCT = 4.5;
 
 // ============================================================================
 // CARTELERA INICIAL DE MICRO-EVENTOS (4 Eventos Comerciales)
@@ -165,10 +164,11 @@ let ordersStore: TicketOrder[] = [
     posterTheme: 'violet',
     quantity: 2,
     unitPriceUsd: 8.0,
-    totalUsd: 16.0,
-    totalBs: 720.0,
-    commissionUsd: 0.72,
-    netOrganizerUsd: 15.28,
+    subtotalTicketsUsd: 16.0,
+    flatFeeUsd: 0.4,
+    totalUsd: 16.4,
+    totalBs: 738.0,
+    netOrganizerUsd: 16.0,
     status: 'paid',
     createdAtIso: new Date(Date.now() - 1000 * 60 * 18).toISOString(),
     buyerName: 'Mariana Gómez',
@@ -182,7 +182,7 @@ let ordersStore: TicketOrder[] = [
       rif: 'J-50482910-3',
       phone: '0414-288-9010',
       conceptRef: 'VT-84912',
-      qrPayload: 'veloztix://pay/VT-84912?bs=720.00',
+      qrPayload: 'veloztix://pay/VT-84912?bs=738.00',
       expiresAtIso: new Date(Date.now() + 300000).toISOString(),
       ttlSeconds: 300,
     },
@@ -200,10 +200,11 @@ let ordersStore: TicketOrder[] = [
     posterTheme: 'emerald',
     quantity: 3,
     unitPriceUsd: 12.0,
-    totalUsd: 36.0,
-    totalBs: 1620.0,
-    commissionUsd: 1.62,
-    netOrganizerUsd: 34.38,
+    subtotalTicketsUsd: 36.0,
+    flatFeeUsd: 0.6,
+    totalUsd: 36.6,
+    totalBs: 1647.0,
+    netOrganizerUsd: 36.0,
     status: 'paid',
     createdAtIso: new Date(Date.now() - 1000 * 60 * 47).toISOString(),
     buyerName: 'Andrés Salcedo',
@@ -217,7 +218,7 @@ let ordersStore: TicketOrder[] = [
       rif: 'J-50482910-3',
       phone: '0414-288-9010',
       conceptRef: 'VT-84895',
-      qrPayload: 'veloztix://pay/VT-84895?bs=1620.00',
+      qrPayload: 'veloztix://pay/VT-84895?bs=1647.00',
       expiresAtIso: new Date(Date.now() + 300000).toISOString(),
       ttlSeconds: 300,
     },
@@ -235,10 +236,11 @@ let ordersStore: TicketOrder[] = [
     posterTheme: 'amber',
     quantity: 2,
     unitPriceUsd: 6.0,
-    totalUsd: 12.0,
-    totalBs: 540.0,
-    commissionUsd: 0.54,
-    netOrganizerUsd: 11.46,
+    subtotalTicketsUsd: 12.0,
+    flatFeeUsd: 0.4,
+    totalUsd: 12.4,
+    totalBs: 558.0,
+    netOrganizerUsd: 12.0,
     status: 'cancelled',
     createdAtIso: new Date(Date.now() - 1000 * 60 * 95).toISOString(),
     buyerName: 'Daniela Rivas',
@@ -252,7 +254,7 @@ let ordersStore: TicketOrder[] = [
       rif: 'J-50482910-3',
       phone: '0414-288-9010',
       conceptRef: 'VT-84860',
-      qrPayload: 'veloztix://pay/VT-84860?bs=540.00',
+      qrPayload: 'veloztix://pay/VT-84860?bs=558.00',
       expiresAtIso: new Date(Date.now() - 300000).toISOString(),
       ttlSeconds: 300,
     },
@@ -389,12 +391,13 @@ export async function createTicketReservation(
 
   const orderNumber = Math.floor(85000 + Math.random() * 14999);
   const orderId = `VT-${orderNumber}`;
-  const totalUsd = Number((quantity * event.priceUsd).toFixed(2));
-  const totalBs = Number((quantity * event.priceBs).toFixed(2));
-  const commissionUsd = Number(
-    (totalUsd * (VELOZTIX_FEE_PCT / 100)).toFixed(2)
+  const subtotalTicketsUsd = Number((quantity * event.priceUsd).toFixed(2));
+  const flatFeeUsd = Number(
+    (quantity * FLAT_FEE_PER_TICKET_USD).toFixed(2)
   );
-  const netOrganizerUsd = Number((totalUsd - commissionUsd).toFixed(2));
+  const totalUsd = Number((subtotalTicketsUsd + flatFeeUsd).toFixed(2));
+  const totalBs = Number((totalUsd * BCV_RATE_BS).toFixed(2));
+  const netOrganizerUsd = subtotalTicketsUsd;
 
   const ttlSeconds = 300;
   const expiresAtIso = new Date(Date.now() + ttlSeconds * 1000).toISOString();
@@ -409,9 +412,10 @@ export async function createTicketReservation(
     posterTheme: event.posterTheme,
     quantity,
     unitPriceUsd: event.priceUsd,
+    subtotalTicketsUsd,
+    flatFeeUsd,
     totalUsd,
     totalBs,
-    commissionUsd,
     netOrganizerUsd,
     status: 'pending',
     createdAtIso: new Date().toISOString(),
@@ -541,7 +545,8 @@ export function getAllOrders(): TicketOrder[] {
 export interface ReconciliationSummary {
   grossUsd: number;
   grossBs: number;
-  veloztixFeeUsd: number;
+  reconciledTicketsCount: number;
+  veloztixFlatFeeUsd: number;
   netOrganizerUsd: number;
   allMatched: boolean;
   pendingCount: number;
@@ -560,6 +565,8 @@ export function getReconciliationSummary(): ReconciliationSummary {
     quantity: ord.quantity,
     amountUsd: ord.totalUsd,
     amountBs: ord.totalBs,
+    flatFeeUsd: ord.flatFeeUsd,
+    netOrganizerUsd: ord.netOrganizerUsd,
     paymentRef: `PM-${ord.id.replace('VT-', '90')}`,
     state: 'matched',
     note: 'Pago Móvil verificado y entrada activa',
@@ -573,8 +580,10 @@ export function getReconciliationSummary(): ReconciliationSummary {
       eventTitle: 'CyberFest UCAB 2026: Valorant Finals & Indie Party',
       buyerDisplay: 'Carlos Mendoza (V-**.*39.104)',
       quantity: 2,
-      amountUsd: 16.0,
-      amountBs: 720.0,
+      amountUsd: 16.4,
+      amountBs: 738.0,
+      flatFeeUsd: 0.4,
+      netOrganizerUsd: 16.0,
       paymentRef: 'PM-9084877',
       state: 'payment_without_ticket',
       note: 'Pago Móvil recibido en cuenta · Pendiente emitir entrada al comprador',
@@ -582,23 +591,28 @@ export function getReconciliationSummary(): ReconciliationSummary {
   }
 
   const matchedRows = rows.filter((r) => r.state === 'matched');
+  const reconciledTicketsCount = matchedRows.reduce(
+    (sum, r) => sum + r.quantity,
+    0
+  );
   const grossUsd = Number(
     matchedRows.reduce((sum, r) => sum + r.amountUsd, 0).toFixed(2)
   );
   const grossBs = Number(
     matchedRows.reduce((sum, r) => sum + r.amountBs, 0).toFixed(2)
   );
-  const veloztixFeeUsd = Number(
-    (grossUsd * (VELOZTIX_FEE_PCT / 100)).toFixed(2)
+  const veloztixFlatFeeUsd = Number(
+    (reconciledTicketsCount * FLAT_FEE_PER_TICKET_USD).toFixed(2)
   );
-  const netOrganizerUsd = Number((grossUsd - veloztixFeeUsd).toFixed(2));
+  const netOrganizerUsd = Number((grossUsd - veloztixFlatFeeUsd).toFixed(2));
 
   const pendingCount = rows.filter((r) => r.state !== 'matched').length;
 
   return {
     grossUsd,
     grossBs,
-    veloztixFeeUsd,
+    reconciledTicketsCount,
+    veloztixFlatFeeUsd,
     netOrganizerUsd,
     allMatched: pendingCount === 0,
     pendingCount,
@@ -627,10 +641,11 @@ export async function runCommercialReconciliation(): Promise<ReconciliationSumma
       posterTheme: 'violet',
       quantity: 2,
       unitPriceUsd: 8.0,
-      totalUsd: 16.0,
-      totalBs: 720.0,
-      commissionUsd: 0.72,
-      netOrganizerUsd: 15.28,
+      subtotalTicketsUsd: 16.0,
+      flatFeeUsd: 0.4,
+      totalUsd: 16.4,
+      totalBs: 738.0,
+      netOrganizerUsd: 16.0,
       status: 'paid',
       createdAtIso: new Date().toISOString(),
       buyerName: 'Carlos Mendoza',
@@ -644,7 +659,7 @@ export async function runCommercialReconciliation(): Promise<ReconciliationSumma
         rif: 'J-50482910-3',
         phone: '0414-288-9010',
         conceptRef: 'VT-84877',
-        qrPayload: 'veloztix://pay/VT-84877?bs=720.00',
+        qrPayload: 'veloztix://pay/VT-84877?bs=738.00',
         expiresAtIso: new Date().toISOString(),
         ttlSeconds: 300,
       },

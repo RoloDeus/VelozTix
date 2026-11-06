@@ -109,6 +109,10 @@ export const PaymentQRView: React.FC<PaymentQRViewProps> = ({
               <span className="text-xs text-zinc-400">
                 Equivalente a ${order.totalUsd.toFixed(2)} USD
               </span>
+              <span className="mt-1 text-[11px] text-zinc-500">
+                Incluye ${order.subtotalTicketsUsd.toFixed(2)} en entradas + $
+                {order.flatFeeUsd.toFixed(2)} tarifa fija ($0.20 c/u)
+              </span>
             </div>
           </div>
 
