@@ -13,10 +13,9 @@ import {
   Users,
 } from 'lucide-react';
 import {
-  BCV_RATE_BS,
+  calculateVelozTixPricing,
   EventCategory,
   EventItem,
-  FLAT_FEE_PER_TICKET_USD,
 } from '../types/veloztix';
 import { EventPosterArt } from '../components/EventPosterArt';
 
@@ -59,14 +58,10 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
   // MODO DETALLE DEL EVENTO
   // ==========================================================================
   if (selectedEvent) {
-    const subtotalUsd = Number(
-      (ticketQty * selectedEvent.priceUsd).toFixed(2)
+    const pricing = calculateVelozTixPricing(
+      selectedEvent.priceUsd,
+      ticketQty
     );
-    const flatFeeUsd = Number(
-      (ticketQty * FLAT_FEE_PER_TICKET_USD).toFixed(2)
-    );
-    const totalUsd = Number((subtotalUsd + flatFeeUsd).toFixed(2));
-    const totalBs = Number((totalUsd * BCV_RATE_BS).toFixed(2));
 
     return (
       <div className="space-y-6">
@@ -234,26 +229,27 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
                     {ticketQty === 1 ? 'Entrada General' : 'Entradas Generales'}
                   </span>
                   <span className="font-medium text-zinc-200">
-                    ${subtotalUsd.toFixed(2)}
+                    ${pricing.subtotalUsd.toFixed(2)}
                   </span>
                 </div>
-                <div className="flex justify-between text-sm text-zinc-400">
-                  <span>
-                    Tarifa fija de servicio (${FLAT_FEE_PER_TICKET_USD.toFixed(2)}{' '}
-                    × {ticketQty})
-                  </span>
-                  <span className="font-medium text-zinc-200">
-                    ${flatFeeUsd.toFixed(2)}
+                <div className="flex justify-between gap-3 text-sm text-zinc-400">
+                  <span>Tarifa de servicio VelozTix: 4.5% + $0.20 por entrada</span>
+                  <span className="shrink-0 font-medium text-zinc-200">
+                    ${pricing.totalCommissionUsd.toFixed(2)}
                   </span>
                 </div>
                 <div className="flex items-baseline justify-between border-t border-zinc-800 pt-3">
                   <span className="text-base font-bold text-white">Total a pagar</span>
                   <div className="text-right">
                     <span className="block text-xl font-extrabold text-emerald-400">
-                      Bs. {totalBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })}
+                      Bs.{' '}
+                      {pricing.totalBs.toLocaleString('es-VE', {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
                     </span>
                     <span className="text-xs text-zinc-400">
-                      Ref. ${totalUsd.toFixed(2)} USD
+                      Ref. ${pricing.totalUsd.toFixed(2)} USD
                     </span>
                   </div>
                 </div>
@@ -270,7 +266,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
               </button>
 
               <p className="mt-3 text-center text-xs text-zinc-500">
-                Tarifa plana fija de $0.20 USD por entrada · Pago Móvil instantáneo
+                Tarifa de servicio VelozTix: 4.5% + $0.20 por entrada · Pago Móvil instantáneo
               </p>
             </div>
           </div>
@@ -406,7 +402,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
                       ${event.priceUsd.toFixed(2)}
                     </span>
                     <span className="text-xs font-medium text-zinc-400">
-                      / Bs. {event.priceBs.toFixed(0)}
+                      / Bs. {event.priceBs.toFixed(2)}
                     </span>
                   </div>
                 </div>

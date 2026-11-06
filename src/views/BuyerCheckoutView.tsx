@@ -9,10 +9,9 @@ import {
   Smartphone,
 } from 'lucide-react';
 import {
-  BCV_RATE_BS,
   BuyerCheckoutForm,
+  calculateVelozTixPricing,
   EventItem,
-  FLAT_FEE_PER_TICKET_USD,
 } from '../types/veloztix';
 import { EventPosterArt } from '../components/EventPosterArt';
 import { maskCedula } from '../utils/privacyCrypto';
@@ -46,12 +45,7 @@ export const BuyerCheckoutView: React.FC<BuyerCheckoutViewProps> = ({
 }) => {
   const [validationError, setValidationError] = useState<string | null>(null);
 
-  const subtotalUsd = Number((quantity * event.priceUsd).toFixed(2));
-  const flatFeeUsd = Number(
-    (quantity * FLAT_FEE_PER_TICKET_USD).toFixed(2)
-  );
-  const totalUsd = Number((subtotalUsd + flatFeeUsd).toFixed(2));
-  const totalBs = Number((totalUsd * BCV_RATE_BS).toFixed(2));
+  const pricing = calculateVelozTixPricing(event.priceUsd, quantity);
 
   const maskedPreview = form.cedulaDigits
     ? maskCedula(form.docPrefix, form.cedulaDigits)
@@ -343,17 +337,14 @@ export const BuyerCheckoutView: React.FC<BuyerCheckoutViewProps> = ({
                   {quantity} × Entrada General (${event.priceUsd.toFixed(2)})
                 </span>
                 <span className="font-semibold text-white">
-                  ${subtotalUsd.toFixed(2)}
+                  ${pricing.subtotalUsd.toFixed(2)}
                 </span>
               </div>
 
-              <div className="flex justify-between text-zinc-300">
-                <span>
-                  Comisión fija por entrada (${FLAT_FEE_PER_TICKET_USD.toFixed(2)}{' '}
-                  × {quantity})
-                </span>
-                <span className="font-semibold text-white">
-                  ${flatFeeUsd.toFixed(2)}
+              <div className="flex justify-between gap-3 text-zinc-300">
+                <span>Tarifa de servicio VelozTix: 4.5% + $0.20 por entrada</span>
+                <span className="shrink-0 font-semibold text-white">
+                  ${pricing.totalCommissionUsd.toFixed(2)}
                 </span>
               </div>
 
@@ -366,17 +357,25 @@ export const BuyerCheckoutView: React.FC<BuyerCheckoutViewProps> = ({
                 <span className="text-base font-bold text-white">Total a pagar</span>
                 <div className="text-right">
                   <span className="block text-2xl font-extrabold text-emerald-400">
-                    Bs. {totalBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })}
+                    Bs.{' '}
+                    {pricing.totalBs.toLocaleString('es-VE', {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
                   </span>
                   <span className="text-xs text-zinc-400">
-                    Equivalente a ${totalUsd.toFixed(2)} USD
+                    Equivalente a ${pricing.totalUsd.toFixed(2)} USD
                   </span>
                 </div>
               </div>
 
               <p className="pt-1 text-xs leading-relaxed text-zinc-400">
-                Tarifa plana fija de <strong className="text-zinc-200">$0.20 USD</strong>{' '}
-                por cada entrada vendida, sin cargos porcentuales.
+                Tarifa de servicio VelozTix:{' '}
+                <strong className="text-zinc-200">
+                  4.5% + $0.20 por entrada
+                </strong>{' '}
+                (${pricing.percentageFeeUsd.toFixed(2)} + $
+                {pricing.flatFeeUsd.toFixed(2)}).
               </p>
             </div>
           </div>

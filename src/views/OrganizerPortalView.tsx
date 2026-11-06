@@ -164,15 +164,15 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
             </span>
             <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-300">
               <Sparkles className="h-3 w-3" />
-              Suscripción SaaS Pro Activa · Tarifa fija $0.20 USD / entrada
+              Suscripción SaaS Pro Activa · Comisión VelozTix (4.5% + $0.20/ticket)
             </span>
           </div>
           <h1 className="mt-1.5 text-2xl font-extrabold text-white sm:text-3xl">
             Portal del Organizador
           </h1>
           <p className="mt-1 text-sm text-zinc-400">
-            Administra tus eventos, revisa tus ventas en vivo y consulta el cierre de
-            pagos de tu taquilla con comisión plana por boleto.
+            Administra tus eventos, revisa tus ventas en vivo y consulta la
+            conciliación comercial bajo el esquema 4.5% + $0.20 por entrada.
           </p>
         </div>
 
@@ -300,8 +300,13 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
                     </div>
                     <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-zinc-400">
                       <span>
-                        Entrada: <strong className="text-white">${ev.priceUsd.toFixed(2)}</strong>{' '}
-                        + <span className="text-violet-300">$0.20 tarifa fija</span>
+                        Entrada:{' '}
+                        <strong className="text-white">
+                          ${ev.priceUsd.toFixed(2)}
+                        </strong>{' '}
+                        <span className="text-violet-300">
+                          (+ 4.5% + $0.20 por entrada)
+                        </span>
                       </span>
                       {ev.reservedCount > 0 && (
                         <span className="text-amber-300">
@@ -452,7 +457,11 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
                         ${ord.totalUsd.toFixed(2)}
                       </span>
                       <span className="text-xs text-zinc-400">
-                        Bs. {ord.totalBs.toLocaleString('es-VE')}
+                        Bs.{' '}
+                        {ord.totalBs.toLocaleString('es-VE', {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
                       </span>
                     </td>
 
@@ -508,7 +517,7 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <div className="rounded-3xl border border-zinc-800 bg-zinc-900/90 p-6">
               <div className="flex items-center justify-between text-xs font-semibold text-zinc-400">
-                <span>Total recaudado por Pago Móvil</span>
+                <span>Total Recaudado (Pago Móvil)</span>
                 <DollarSign className="h-4 w-4 text-violet-400" />
               </div>
               <p className="mt-3 text-3xl font-extrabold text-white">
@@ -518,35 +527,35 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
                 Bs.{' '}
                 {reconciliation.grossBs.toLocaleString('es-VE', {
                   minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
                 })}{' '}
-                · {reconciliation.reconciledTicketsCount} entradas conciliadas
+                · Monto bruto entradas: ${reconciliation.subtotalTicketsUsd.toFixed(2)} ({reconciliation.reconciledTicketsCount} tickets)
               </p>
             </div>
 
             <div className="rounded-3xl border border-zinc-800 bg-zinc-900/90 p-6">
               <div className="flex items-center justify-between text-xs font-semibold text-zinc-400">
-                <span>Tarifa plana VelozTix ($0.20 / entrada)</span>
+                <span>Comisión VelozTix (4.5% + $0.20/ticket)</span>
                 <Ticket className="h-4 w-4 text-violet-400" />
               </div>
               <p className="mt-3 text-3xl font-extrabold text-violet-300">
-                -${reconciliation.veloztixFlatFeeUsd.toFixed(2)}
+                -${reconciliation.veloztixTotalCommissionUsd.toFixed(2)}
               </p>
               <p className="mt-1 text-xs text-zinc-400">
-                {reconciliation.reconciledTicketsCount} entradas × $0.20 USD fijo (sin %
-                variable)
+                Esquema 4.5% + $0.20/ticket (${reconciliation.veloztixPercentageFeeUsd.toFixed(2)} + ${reconciliation.veloztixFlatFeeUsd.toFixed(2)})
               </p>
             </div>
 
             <div className="rounded-3xl border border-emerald-500/35 bg-gradient-to-br from-emerald-950/30 to-zinc-900 p-6">
               <div className="flex items-center justify-between text-xs font-semibold text-emerald-300">
-                <span>Monto neto liquidado al organizador</span>
+                <span>Monto Neto a Liquidar al Organizador</span>
                 <Wallet className="h-4 w-4 text-emerald-400" />
               </div>
               <p className="mt-3 text-3xl font-extrabold text-emerald-400">
                 ${reconciliation.netOrganizerUsd.toFixed(2)}
               </p>
               <p className="mt-1 text-xs text-zinc-300">
-                100% del valor nominal de las entradas vendidas
+                Total Recaudado (${reconciliation.grossUsd.toFixed(2)}) − Comisión Total VelozTix (${reconciliation.veloztixTotalCommissionUsd.toFixed(2)})
               </p>
             </div>
           </div>
@@ -559,8 +568,8 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
                   Cuadre de Pagos Móviles vs. Entradas Emitidas
                 </h2>
                 <p className="mt-0.5 text-xs text-zinc-400">
-                  Compara cada Pago Móvil recibido contra las entradas entregadas y
-                  aplica la tarifa fija de $0.20 USD por boleto.
+                  Compara cada Pago Móvil recibido contra las entradas entregadas
+                  aplicando la Comisión VelozTix (4.5% + $0.20/ticket).
                 </p>
               </div>
 
@@ -583,8 +592,8 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
                 <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-400" />
                 <span>
                   <strong>¡Cierre cuadrado al 100%!</strong> Todas las órdenes cobradas por
-                  Pago Móvil coinciden con las entradas emitidas bajo la tarifa fija de
-                  $0.20 USD por ticket.
+                  Pago Móvil coinciden con las entradas emitidas aplicando la
+                  Comisión VelozTix (4.5% + $0.20/ticket).
                 </span>
               </div>
             ) : (
@@ -599,43 +608,54 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
 
             {/* Tabla limpia de órdenes conciliadas */}
             <div className="mt-5 overflow-x-auto rounded-2xl border border-zinc-800">
-              <table className="w-full min-w-[780px] border-collapse text-left text-sm">
+              <table className="w-full min-w-[880px] border-collapse text-left text-sm">
                 <thead>
                   <tr className="border-b border-zinc-800 bg-zinc-950 text-xs font-semibold uppercase tracking-wider text-zinc-400">
                     <th className="px-4 py-3.5">Orden</th>
                     <th className="px-4 py-3.5">Evento &amp; Comprador</th>
-                    <th className="px-4 py-3.5">Referencia Pago Móvil</th>
-                    <th className="px-4 py-3.5">Cobrado / Tarifa Fija / Neto</th>
+                    <th className="px-4 py-3.5">Total Recaudado</th>
+                    <th className="px-4 py-3.5">Comisión VelozTix (4.5% + $0.20/ticket)</th>
+                    <th className="px-4 py-3.5">Monto Neto a Liquidar</th>
                     <th className="px-4 py-3.5 text-right">Estado del Cuadre</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-800/80">
                   {reconciliation.rows.map((row) => (
                     <tr key={row.id} className="hover:bg-zinc-800/30">
-                      <td className="px-4 py-3.5 font-mono text-xs font-bold text-white">
-                        #{row.orderId}
+                      <td className="px-4 py-3.5">
+                        <span className="block font-mono text-xs font-bold text-white">
+                          #{row.orderId}
+                        </span>
+                        <span className="font-mono text-[11px] text-zinc-500">
+                          {row.paymentRef}
+                        </span>
                       </td>
                       <td className="px-4 py-3.5">
                         <p className="font-semibold text-white">{row.eventTitle}</p>
                         <p className="text-xs text-zinc-400">
                           {row.buyerDisplay} · {row.quantity}{' '}
-                          {row.quantity === 1 ? 'entrada' : 'entradas'}
+                          {row.quantity === 1 ? 'entrada' : 'entradas'} ($
+                          {row.subtotalTicketsUsd.toFixed(2)} bruto)
                         </p>
                       </td>
-                      <td className="px-4 py-3.5 font-mono text-xs text-zinc-300">
-                        {row.paymentRef}
+                      <td className="px-4 py-3.5">
+                        <span className="block font-bold text-white">
+                          ${row.amountUsd.toFixed(2)}
+                        </span>
+                        <span className="text-xs text-zinc-400">
+                          Bs. {row.amountBs.toFixed(2)}
+                        </span>
                       </td>
                       <td className="px-4 py-3.5">
-                        <div className="font-bold text-white">
-                          ${row.amountUsd.toFixed(2)}{' '}
-                          <span className="text-xs font-normal text-zinc-400">
-                            (Bs. {row.amountBs.toFixed(0)})
-                          </span>
-                        </div>
-                        <div className="mt-0.5 text-xs text-zinc-400">
-                          Tarifa: <span className="text-violet-300">-${row.flatFeeUsd.toFixed(2)}</span>{' '}
-                          · Neto: <span className="font-semibold text-emerald-400">${row.netOrganizerUsd.toFixed(2)}</span>
-                        </div>
+                        <span className="block font-bold text-violet-300">
+                          -${row.veloztixCommissionUsd.toFixed(2)}
+                        </span>
+                        <span className="text-[11px] text-zinc-400">
+                          ${row.percentageFeeUsd.toFixed(2)} + ${row.flatFeeUsd.toFixed(2)}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3.5 font-extrabold text-emerald-400">
+                        ${row.netOrganizerUsd.toFixed(2)}
                       </td>
                       <td className="px-4 py-3.5 text-right">
                         {row.state === 'matched' ? (
@@ -679,9 +699,11 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
                 </h2>
                 <p className="mt-0.5 text-xs text-zinc-300">
                   Accede a inteligencia de audiencia en vivo y protección anti-reventa
-                  manteniendo nuestra tarifa plana de solo{' '}
-                  <strong className="text-emerald-400">$0.20 USD fijos</strong> por cada
-                  entrada vendida.
+                  bajo nuestro esquema de comisión mixta:{' '}
+                  <strong className="text-emerald-400">
+                    4.5% + $0.20 USD por entrada
+                  </strong>
+                  .
                 </p>
               </div>
             </div>
