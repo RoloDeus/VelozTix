@@ -11,6 +11,7 @@ Este documento describe **todas las pruebas** implementadas en la plataforma **V
 | **Pruebas Integrales y de Seguridad** | `backend/tests/backend.spec.ts` | 19 tests | Valida criptografía PII, middlewares, endpoints REST, reglas anti-tampering y conciliación. |
 | **Matriz de Certificación Técnica** | `backend/tests/certification.test.ts` | 10 tests (TC-01 a TC-10) | Valida el ciclo de vida transaccional bancario, ISO 8583, SLA de IA y resiliencia de inventario. |
 | **Benchmark de Rendimiento y Estrés** | `backend/scripts/kpi_benchmark.ts` | 200 TXS concurrentes | Evalúa latencias p95 (< 80 ms IA), rendimiento sostenido en TPS ($\ge$ 30 TPS) y concurrencia SQLite. |
+| **Baseline de IA y Dataset Sintético** | `ai_service/train_baseline.py` · `test_ai_service.py` | 2,500 muestras / 3 tests | Genera el dataset sintético normalizado, entrena el modelo `Random Forest + Isolation Forest` y valida el microservicio `FastAPI`. |
 | **Pruebas de Compilación y Tipado** | `tsc -b`, `npm run build` | Frontend + Backend | Garantiza cero errores de tipos TypeScript y empaquetado de producción limpio. |
 | **Pruebas Manuales / E2E Front-End** | Navegador (`http://localhost:5173`) | 5 flujos | Comprueba experiencia de usuario, telemetría silenciosa DOM y conmutación al modo híbrido/offline. |
 
@@ -33,6 +34,21 @@ npm run benchmark
 # 4. Verificar compilación estricta de TypeScript en Frontend y Backend
 npm run backend:build
 npm run build
+
+# 5. Generar el Dataset Sintético Estructurado (2,500 muestras raw + normalizadas)
+npm run ai:dataset
+# (o directamente: python ai_service/generate_dataset.py)
+
+# 6. Entrenar y evaluar el Algoritmo Baseline (Random Forest + Isolation Forest)
+npm run ai:train
+# (o directamente: python ai_service/train_baseline.py)
+
+# 7. Ejecutar la suite de pruebas del Motor de IA y Dataset en Python
+python ai_service/test_ai_service.py
+
+# 8. Levantar el microservicio de IA (FastAPI en http://127.0.0.1:8001)
+npm run ai:serve
+# (o directamente: python ai_service/app.py)
 ```
 
 ---
@@ -183,6 +199,45 @@ npm run benchmark
 | **Latencia p95 Inferencia Anti-Bot** | < 80.0 ms | **~18 ms** | **CUMPLE (SLA ESTRICTO)** |
 | **Tasa de Reversos Controlada** | $\le$ 10.0 % | **7.5 %** | **CUMPLE** |
 | **Integridad Concurrente de Base de Datos** | 0 errores SQLite | **0 errores** | **CUMPLE** |
+
+---
+
+## 🤖 2.1. Ejecución del Dataset Sintético Estructurado y Algoritmo Baseline de IA (Python + FastAPI)
+
+Ubicados en la carpeta `ai_service/`, estos scripts cubren la **Sección 6 (Baseline de IA y Dataset Sintético Estructurado)**:
+
+### 1. Generar el Dataset Sintético Estructurado (2,500 muestras)
+```bash
+npm run ai:dataset
+# Alternativa directa en Python:
+python ai_service/generate_dataset.py
+```
+* **Archivos generados en `ai_service/dataset/`:**
+  * `synthetic_telemetry_raw.csv`: 2,500 sesiones con telemetría anonimizada (`customer_hash`, `device_fingerprint`) y las 4 clases (`FAN_DECIDIDO`: 1,150, `COMPRADOR_INDECISO`: 600, `BOT_AUTOFILL`: 400, `SCALPER_MASIVO`: 350).
+  * `synthetic_telemetry_normalized.csv`: Las 13 variables numéricas normalizadas con **Min-Max ($[0,1]$)** y **Z-Score ($\mu=0, \sigma=1$)**.
+  * `normalization_stats.json`: Parámetros estadísticos ($\min, \max, \mu, \sigma$) de cada variable.
+  * `DICCIONARIO_VARIABLES.md`: Diccionario completo de variables y justificación antifraude/B2B.
+
+### 2. Entrenar y Evaluar el Algoritmo Baseline (Random Forest + Isolation Forest)
+```bash
+npm run ai:train
+# Alternativa directa en Python:
+python ai_service/train_baseline.py
+```
+* **Qué hace:** Entrena el modelo híbrido (**Random Forest Classifier** de 25 árboles CART con criterio Gini + **Isolation Forest** de 25 árboles de aislamiento) con partición 80% Train (2,000) / 20% Test (500), e imprime en consola `Accuracy`, `Precision`, `Recall`, `F1-Score`, `ROC-AUC`, Matriz de Confusión y latencia p95 (`0.0645 ms < 80 ms`).
+* **Artefactos exportados en `ai_service/models/`:**
+  * `baseline_rf_iforest_model.json`: Árboles y umbrales entrenados consumidos por FastAPI y por el backend TypeScript.
+  * `evaluation_metrics.json`: Reporte completo de validación.
+
+### 3. Ejecutar las Pruebas Automatizadas de IA y Levantar el Microservicio FastAPI
+```bash
+# Ejecutar los 3 tests unitarios del dataset, métricas y clasificación de los 4 arquetipos
+python ai_service/test_ai_service.py
+
+# Iniciar el microservicio de IA en http://127.0.0.1:8001
+npm run ai:serve
+# (Opcional: instalar dependencias FastAPI/Uvicorn con `pip install -r ai_service/requirements.txt`)
+```
 
 ---
 
