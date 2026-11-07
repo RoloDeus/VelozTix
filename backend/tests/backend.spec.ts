@@ -238,7 +238,7 @@ describe('VelozTix Backend Merchant & Mediator API - OpenAPI 3.0 & Reconciliatio
   // 4. Endpoint GET /api/v1/orders/{order_id}/status
   // ========================================================
   describe('GET /api/v1/orders/{order_id}/status', () => {
-    it('retorna ticket_qr como null mientras está en AUTHORIZED y con JWT firmado tras SETTLED', async () => {
+    it('retorna ticket_qr como null mientras está en AUTHORIZED y con JWT firmado tras SETTLED o RECONCILED', async () => {
       // 1. Authorize order
       const authRes = await request(app)
         .post('/api/v1/orders/authorize')
@@ -300,6 +300,21 @@ describe('VelozTix Backend Merchant & Mediator API - OpenAPI 3.0 & Reconciliatio
       assert.ok(statusRes2.body.ticket_qr);
       const jwtCheck = container.cryptoService.verifyTicketJwt(statusRes2.body.ticket_qr);
       assert.strictEqual(jwtCheck.valid, true);
+
+      // Status in RECONCILED -> ticket_qr must also be populated with valid JWT
+      await request(app)
+        .post('/api/v1/settlements/reconcile')
+        .send({ merchant_id: 'MRC_UCAB_00129' });
+
+      const statusRes3 = await request(app)
+        .get(`/api/v1/orders/${orderId}/status`)
+        .set('X-VelozTix-API-Key', testConfig.apiKey);
+
+      assert.strictEqual(statusRes3.status, 200);
+      assert.strictEqual(statusRes3.body.status, 'RECONCILED');
+      assert.ok(statusRes3.body.ticket_qr);
+      const jwtCheckRec = container.cryptoService.verifyTicketJwt(statusRes3.body.ticket_qr);
+      assert.strictEqual(jwtCheckRec.valid, true);
     });
   });
 
@@ -697,6 +712,206 @@ describe('VelozTix Backend Merchant & Mediator API - OpenAPI 3.0 & Reconciliatio
       // Order moved to REVERSED
       const order = container.orderRepo.findById(orderId);
       assert.strictEqual(order?.status, 'REVERSED');
+    });
+
+    it('registra automáticamente en externalMockService al capturar y GET /settlements/report?merchant_id=... lo retorna para conciliar sin revocar', async () => {
+      // 1. Authorize order
+      const authRes = await request(app)
+        .post('/api/v1/orders/authorize')
+        .set('X-VelozTix-API-Key', testConfig.apiKey)
+        .set('Idempotency-Key', 'case-a-auto-record')
+        .send({
+          event_id: 'evt-neon-rave',
+          items: [{ ticket_tier_id: 'vip', quantity: 1, unit_price_bs: 450.0 }],
+          buyer_pii: {
+            national_id: 'V-25111222',
+            phone_number: '+584145556677',
+            email: 'autorecord@ucab.edu.ve',
+          },
+          telemetry: {
+            dwell_time: 30000,
+            scroll_depth: 85,
+            checkout_fill_time_ms: 11000,
+            keystroke_dynamics: { avg_flight_time_ms: 120, cursor_linearity_index: 0.2 },
+            copy_paste_flag: false,
+            tab_switch_count: 0,
+            device_fingerprint: 'dfp_auto_rec',
+          },
+        });
+
+      const orderId = authRes.body.order_id;
+      const rrn = authRes.body.iso8583_trace.de37_rrn;
+
+      // 2. Webhook capture
+      const webhookPayload = {
+        event_type: 'payment.captured',
+        order_id: orderId,
+        payment_reference: '0077889900',
+        amount_bs: 450.0,
+        iso8583_settlement: { mti: '0200', de37_rrn: rrn, de39_response_code: '00' },
+        timestamp: clock.toISOString(),
+      };
+      const rawJson = JSON.stringify(webhookPayload);
+      await request(app)
+        .post('/api/v1/webhooks/pago-movil')
+        .set('X-Signature', container.cryptoService.generateWebhookSignature(rawJson))
+        .set('Content-Type', 'application/json')
+        .send(rawJson);
+
+      // 3. Consultar GET /settlements/report?merchant_id=MRC_UCAB_00129
+      const reportResRoot = await request(app)
+        .get('/settlements/report?merchant_id=MRC_UCAB_00129');
+      assert.strictEqual(reportResRoot.status, 200);
+      assert.ok(Array.isArray(reportResRoot.body));
+      const entry = reportResRoot.body.find((r: any) => r.order_id === orderId);
+      assert.ok(entry, 'El reporte externo debe contener la orden capturada');
+      assert.strictEqual(entry.merchant_id, 'MRC_UCAB_00129');
+      assert.strictEqual(entry.payment_reference, '0077889900');
+      assert.strictEqual(entry.de37_rrn, rrn);
+      assert.strictEqual(entry.amount_bs, 450.0);
+      assert.strictEqual(entry.status, 'SETTLED');
+      assert.ok(entry.paid_at);
+
+      // Also verify via /api/v1/settlements/report?merchant_id=MRC_UCAB_00129
+      const reportResApi = await request(app)
+        .get('/api/v1/settlements/report?merchant_id=MRC_UCAB_00129');
+      assert.strictEqual(reportResApi.status, 200);
+      assert.ok(reportResApi.body.some((r: any) => r.order_id === orderId));
+
+      // 4. Run POST /api/v1/settlements/reconcile WITHOUT external_report body
+      const recRes = await request(app)
+        .post('/api/v1/settlements/reconcile')
+        .send({ merchant_id: 'MRC_UCAB_00129' });
+
+      assert.strictEqual(recRes.status, 200);
+      assert.strictEqual(recRes.body.total_orders_matched, 1);
+      assert.strictEqual(recRes.body.total_revoked_discrepancy, 0);
+
+      const order = container.orderRepo.findById(orderId);
+      assert.strictEqual(order?.status, 'RECONCILED');
+
+      const tickets = container.ticketRepo.findByOrderId(orderId);
+      assert.strictEqual(tickets[0]?.status, 'ACTIVE');
+    });
+
+    it('soporta inyección directa external_settlement_entries en POST /api/v1/settlements/reconcile y cruza por order_id, payment_reference o de37_rrn', async () => {
+      // Clear mock
+      container.externalMockService.clear();
+
+      // Order 1: match via order_id
+      const o1 = await request(app)
+        .post('/api/v1/orders/authorize')
+        .set('X-VelozTix-API-Key', testConfig.apiKey)
+        .set('Idempotency-Key', 'case-inj-1')
+        .send({
+          event_id: 'evt-neon-rave',
+          items: [{ ticket_tier_id: 'vip', quantity: 1, unit_price_bs: 450.0 }],
+          buyer_pii: { national_id: 'V-11111111', phone_number: '+584141111111', email: 'inj1@ucab.edu.ve' },
+          telemetry: {
+            dwell_time: 30000, scroll_depth: 85, checkout_fill_time_ms: 11000,
+            keystroke_dynamics: { avg_flight_time_ms: 120, cursor_linearity_index: 0.2 },
+            copy_paste_flag: false, tab_switch_count: 0, device_fingerprint: 'dfp_inj1',
+          },
+        });
+      const orderId1 = o1.body.order_id;
+      const rrn1 = o1.body.iso8583_trace.de37_rrn;
+
+      // Order 2: match via payment_reference
+      const o2 = await request(app)
+        .post('/api/v1/orders/authorize')
+        .set('X-VelozTix-API-Key', testConfig.apiKey)
+        .set('Idempotency-Key', 'case-inj-2')
+        .send({
+          event_id: 'evt-cyberfest-26',
+          items: [{ ticket_tier_id: 'general', quantity: 1, unit_price_bs: 360.0 }],
+          buyer_pii: { national_id: 'V-22222222', phone_number: '+584142222222', email: 'inj2@ucab.edu.ve' },
+          telemetry: {
+            dwell_time: 30000, scroll_depth: 85, checkout_fill_time_ms: 11000,
+            keystroke_dynamics: { avg_flight_time_ms: 120, cursor_linearity_index: 0.2 },
+            copy_paste_flag: false, tab_switch_count: 0, device_fingerprint: 'dfp_inj2',
+          },
+        });
+      const orderId2 = o2.body.order_id;
+      const rrn2 = o2.body.iso8583_trace.de37_rrn;
+
+      // Order 3: match via de37_rrn
+      const o3 = await request(app)
+        .post('/api/v1/orders/authorize')
+        .set('X-VelozTix-API-Key', testConfig.apiKey)
+        .set('Idempotency-Key', 'case-inj-3')
+        .send({
+          event_id: 'evt-standup-chacao',
+          items: [{ ticket_tier_id: 'general', quantity: 1, unit_price_bs: 270.0 }],
+          buyer_pii: { national_id: 'V-33333333', phone_number: '+584143333333', email: 'inj3@ucab.edu.ve' },
+          telemetry: {
+            dwell_time: 30000, scroll_depth: 85, checkout_fill_time_ms: 11000,
+            keystroke_dynamics: { avg_flight_time_ms: 120, cursor_linearity_index: 0.2 },
+            copy_paste_flag: false, tab_switch_count: 0, device_fingerprint: 'dfp_inj3',
+          },
+        });
+      const orderId3 = o3.body.order_id;
+      const rrn3 = o3.body.iso8583_trace.de37_rrn;
+
+      // Settle all 3 via webhook
+      const settleWh = async (orderId: string, ref: string, amount: number, rrn: string) => {
+        const payload = {
+          event_type: 'payment.captured',
+          order_id: orderId,
+          payment_reference: ref,
+          amount_bs: amount,
+          iso8583_settlement: { mti: '0200', de37_rrn: rrn, de39_response_code: '00' },
+          timestamp: clock.toISOString(),
+        };
+        const rawJson = JSON.stringify(payload);
+        await request(app)
+          .post('/api/v1/webhooks/pago-movil')
+          .set('X-Signature', container.cryptoService.generateWebhookSignature(rawJson))
+          .set('Content-Type', 'application/json')
+          .send(rawJson);
+      };
+
+      await settleWh(orderId1, 'REF_INJ_111', 450.0, rrn1);
+      await settleWh(orderId2, 'REF_INJ_222', 360.0, rrn2);
+      await settleWh(orderId3, 'REF_INJ_333', 270.0, rrn3);
+
+      // Clear mock to ensure reconciliation uses ONLY the injected entries in the body
+      container.externalMockService.clear();
+
+      const externalEntries = [
+        // Entry 1 matches via order_id
+        {
+          order_id: orderId1,
+          amount_bs: 450.0,
+          status: 'SETTLED',
+        },
+        // Entry 2 matches via payment_reference (no order_id)
+        {
+          payment_reference: 'REF_INJ_222',
+          amount_bs: 360.0,
+          status: 'SETTLED',
+        },
+        // Entry 3 matches via de37_rrn (no order_id, no payment_ref)
+        {
+          de37_rrn: rrn3,
+          amount_bs: 270.0,
+          status: 'SETTLED',
+        },
+      ];
+
+      const res = await request(app)
+        .post('/api/v1/settlements/reconcile')
+        .send({
+          merchant_id: 'MRC_UCAB_00129',
+          external_settlement_entries: externalEntries,
+        });
+
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual(res.body.total_orders_matched, 3);
+      assert.strictEqual(res.body.total_revoked_discrepancy, 0);
+
+      assert.strictEqual(container.orderRepo.findById(orderId1)?.status, 'RECONCILED');
+      assert.strictEqual(container.orderRepo.findById(orderId2)?.status, 'RECONCILED');
+      assert.strictEqual(container.orderRepo.findById(orderId3)?.status, 'RECONCILED');
     });
   });
 });

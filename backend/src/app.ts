@@ -42,7 +42,8 @@ export function createApp(container: AppContainer): Express {
 
   // Root endpoint mock para reporte externo de conciliación (GET /settlements/report)
   app.get('/settlements/report', (req, res) => {
-    res.json(container.externalMockService.getReport());
+    const merchantId = (req.query.merchant_id as string) || undefined;
+    res.json(container.externalMockService.getReport(merchantId));
   });
 
   // 3. Mount OpenAPI 3.0 Routes

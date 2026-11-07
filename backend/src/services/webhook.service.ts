@@ -5,6 +5,7 @@ import { PrivacyCryptoService } from './privacy-crypto.service.js';
 import { OrderRepository } from '../db/repositories/order.repository.js';
 import { TicketRepository } from '../db/repositories/ticket.repository.js';
 import { AuditRepository } from '../db/repositories/audit.repository.js';
+import { ExternalSettlementMockService } from './external-settlement-mock.service.js';
 import {
   PagoMovilWebhookPayloadDto,
   WebhookAckResponseDto,
@@ -17,7 +18,8 @@ export class WebhookService {
     private cryptoService: PrivacyCryptoService,
     private orderRepo: OrderRepository,
     private ticketRepo: TicketRepository,
-    private auditRepo: AuditRepository
+    private auditRepo: AuditRepository,
+    private externalMockService?: ExternalSettlementMockService
   ) {}
 
   async processPagoMovilWebhook(params: {
@@ -250,6 +252,19 @@ export class WebhookService {
       payload.payment_reference,
       nowIso
     );
+
+    // Registro automático en Captura para conciliación con proveedor externo
+    if (this.externalMockService) {
+      this.externalMockService.recordSettlement({
+        order_id: order.order_id,
+        merchant_id: order.merchant_id,
+        payment_reference: payload.payment_reference,
+        de37_rrn: payload.iso8583_settlement?.de37_rrn || order.de37_rrn,
+        amount_bs: payload.amount_bs,
+        status: 'SETTLED',
+        paid_at: new Date().toISOString(),
+      });
+    }
 
     // Issue cryptographic tickets (Zero PII in JWT!)
     let firstTicketId: string | null = null;

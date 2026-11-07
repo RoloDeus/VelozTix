@@ -307,10 +307,15 @@ export class OrderService {
     if (!order) return null;
 
     let ticketQr: string | null = null;
-    if (order.status === 'CAPTURED' || order.status === 'SETTLED') {
+    if (
+      order.status === 'SETTLED' ||
+      order.status === 'CAPTURED' ||
+      order.status === 'RECONCILED'
+    ) {
       const tickets = this.ticketRepo.findByOrderId(orderId);
-      if (tickets.length > 0) {
-        ticketQr = tickets[0].ticket_qr;
+      const activeTicket = tickets.find((t) => t.status === 'ACTIVE') || tickets[0];
+      if (activeTicket) {
+        ticketQr = activeTicket.ticket_qr;
       }
     }
 

@@ -50,15 +50,7 @@ export class ReconciliationService {
   ): ReconciliationSummaryResult {
     const nowIso = this.clock.toISOString();
     const externalReport =
-      providedExternalReport || this.externalMockService.getReport();
-
-    // Map external settlements by order_id, payment_reference and rrn
-    const externalMap = new Map<string, ExternalSettlementRecord>();
-    for (const rec of externalReport) {
-      if (rec.order_id) externalMap.set(rec.order_id, rec);
-      if (rec.payment_reference) externalMap.set(rec.payment_reference, rec);
-      if (rec.rrn) externalMap.set(rec.rrn, rec);
-    }
+      providedExternalReport || this.externalMockService.getReport(merchantId);
 
     const localOrders = this.orderRepo.findByMerchant(merchantId);
 
@@ -80,15 +72,29 @@ export class ReconciliationService {
     // 1. Process all local orders
     for (const order of localOrders) {
       processedOrderIds.add(order.order_id);
-      const extRecord =
-        externalMap.get(order.order_id) ||
-        (order.payment_reference ? externalMap.get(order.payment_reference) : undefined) ||
-        (order.de37_rrn ? externalMap.get(order.de37_rrn) : undefined);
+
+      // Criterio de Match en Conciliación:
+      // ext.order_id === order.order_id O ext.payment_reference === order.payment_reference O ext.de37_rrn === order.de37_rrn
+      // Verificando que ext.amount_bs === order.gross_amount_bs
+      const extRecord = externalReport.find((ext: any) => {
+        const extRrn = ext.de37_rrn || ext.rrn;
+        const matchesIdentity =
+          (Boolean(ext.order_id) && ext.order_id === order.order_id) ||
+          (Boolean(ext.payment_reference && order.payment_reference) &&
+            ext.payment_reference === order.payment_reference) ||
+          (Boolean(extRrn && order.de37_rrn) && extRrn === order.de37_rrn);
+
+        if (!matchesIdentity) return false;
+
+        const extAmount = Number(ext.amount_bs ?? ext.amount);
+        return Math.abs(extAmount - order.gross_amount_bs) <= 0.05;
+      });
 
       const hasExternalSettledPayment =
-        extRecord &&
-        extRecord.status === 'SETTLED' &&
-        Math.abs(extRecord.amount_bs - order.gross_amount_bs) <= 0.05;
+        extRecord !== undefined &&
+        (!extRecord.status ||
+          (extRecord.status as string) === 'SETTLED' ||
+          (extRecord.status as string) === 'CAPTURED');
 
       const hasActiveTickets =
         this.ticketRepo.findByOrderId(order.order_id).some((t) => t.status === 'ACTIVE');
@@ -97,7 +103,12 @@ export class ReconciliationService {
       // CASO A: Conciliación exitosa (Orden local SETTLED/CAPTURED con cobro externo coincidente)
       // -----------------------------------------------------------------
       if ((order.status === 'SETTLED' || order.status === 'CAPTURED') && hasExternalSettledPayment) {
-        this.orderRepo.updateStatus(order.order_id, 'RECONCILED', order.payment_reference, nowIso);
+        this.orderRepo.updateStatus(
+          order.order_id,
+          'RECONCILED',
+          order.payment_reference || extRecord?.payment_reference || null,
+          nowIso
+        );
 
         const auditTraceId = `aud_rec_${crypto.randomBytes(4).toString('hex')}`;
         this.auditRepo.insert({
@@ -113,7 +124,7 @@ export class ReconciliationService {
           metadata_snapshot: JSON.stringify({
             case: 'CASE_A_MATCHED',
             gross_amount_bs: order.gross_amount_bs,
-            payment_reference: order.payment_reference,
+            payment_reference: order.payment_reference || extRecord?.payment_reference || null,
           }),
           created_at_utc: nowIso,
         });

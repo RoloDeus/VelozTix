@@ -94,7 +94,8 @@ export function createContainer(
     cryptoService,
     orderRepo,
     ticketRepo,
-    auditRepo
+    auditRepo,
+    externalMockService
   );
 
   const reconciliationService = new ReconciliationService(

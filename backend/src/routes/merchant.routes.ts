@@ -47,7 +47,8 @@ export function createMerchantRouter(
 
   // GET /api/v1/settlements/report - Reporte mock del proveedor externo
   router.get('/settlements/report', (req: Request, res: Response) => {
-    res.json(externalMockService.getReport());
+    const merchantId = (req.query.merchant_id as string) || undefined;
+    res.json(externalMockService.getReport(merchantId));
   });
 
   // POST /api/v1/settlements/reconcile - Worker de Conciliación
@@ -57,7 +58,26 @@ export function createMerchantRouter(
     (req: Request, res: Response, next: NextFunction) => {
       try {
         const merchantId = req.body?.merchant_id || 'MRC_UCAB_00129';
-        const externalReport = req.body?.external_report;
+        const rawEntries = req.body?.external_settlement_entries || req.body?.external_report;
+        let externalReport: any[] | undefined;
+
+        if (Array.isArray(rawEntries)) {
+          externalReport = rawEntries.map((entry: any) => ({
+            order_id: entry.order_id || '',
+            merchant_id: entry.merchant_id || merchantId,
+            payment_reference: entry.payment_reference || entry.reference || '',
+            de37_rrn: entry.de37_rrn || entry.rrn || '',
+            rrn: entry.rrn || entry.de37_rrn || '',
+            amount_bs: Number(entry.amount_bs ?? entry.amount ?? 0),
+            status: entry.status || 'SETTLED',
+            paid_at: entry.paid_at || entry.settled_at || new Date().toISOString(),
+          }));
+
+          for (const rec of externalReport) {
+            externalMockService.recordSettlement(rec);
+          }
+        }
+
         const summary = reconciliationService.executeReconciliation(merchantId, externalReport);
         res.status(200).json(summary);
       } catch (err) {
@@ -72,7 +92,27 @@ export function createMerchantRouter(
     (req: Request, res: Response, next: NextFunction) => {
       try {
         const { merchant_id } = req.params;
-        const summary = reconciliationService.executeReconciliation(merchant_id);
+        const rawEntries = req.body?.external_settlement_entries || req.body?.external_report;
+        let externalReport: any[] | undefined;
+
+        if (Array.isArray(rawEntries)) {
+          externalReport = rawEntries.map((entry: any) => ({
+            order_id: entry.order_id || '',
+            merchant_id: entry.merchant_id || merchant_id,
+            payment_reference: entry.payment_reference || entry.reference || '',
+            de37_rrn: entry.de37_rrn || entry.rrn || '',
+            rrn: entry.rrn || entry.de37_rrn || '',
+            amount_bs: Number(entry.amount_bs ?? entry.amount ?? 0),
+            status: entry.status || 'SETTLED',
+            paid_at: entry.paid_at || entry.settled_at || new Date().toISOString(),
+          }));
+
+          for (const rec of externalReport) {
+            externalMockService.recordSettlement(rec);
+          }
+        }
+
+        const summary = reconciliationService.executeReconciliation(merchant_id, externalReport);
         res.status(200).json(summary);
       } catch (err) {
         next(err);
