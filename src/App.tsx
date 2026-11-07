@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   AppRole,
   BuyerCheckoutForm,
@@ -7,6 +7,10 @@ import {
   EventItem,
   TicketOrder,
 } from './types/veloztix';
+import {
+  createEmptyCheckoutFormState,
+  enforceZeroPersistentPiiStorage,
+} from './utils/security';
 import {
   cancelOrReverseTicketOrder,
   confirmTicketOrderPayment,
@@ -42,14 +46,13 @@ export function App() {
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [ticketQty, setTicketQty] = useState<number>(1);
 
-  const [checkoutForm, setCheckoutForm] = useState<BuyerCheckoutForm>({
-    fullName: '',
-    docPrefix: 'V',
-    cedulaDigits: '',
-    phonePrefix: '0414',
-    phoneDigits: '',
-    email: '',
-  });
+  const [checkoutForm, setCheckoutForm] = useState<BuyerCheckoutForm>(() =>
+    createEmptyCheckoutFormState()
+  );
+
+  useEffect(() => {
+    enforceZeroPersistentPiiStorage();
+  }, []);
 
   const [activeOrder, setActiveOrder] = useState<TicketOrder | null>(null);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
@@ -116,6 +119,8 @@ export function App() {
         telemetrySnapshot
       );
 
+      // Limpieza inmediata de PII en memoria volátil tras seudonimizar y crear la reserva
+      setCheckoutForm(createEmptyCheckoutFormState());
       setActiveOrder(reservedOrder);
       refreshStoreViews();
       setBuyerStep('payment_qr');
@@ -164,14 +169,8 @@ export function App() {
   const handleFinishTicketFlow = () => {
     setActiveOrder(null);
     setSelectedEventId(null);
-    setCheckoutForm({
-      fullName: '',
-      docPrefix: 'V',
-      cedulaDigits: '',
-      phonePrefix: '0414',
-      phoneDigits: '',
-      email: '',
-    });
+    setCheckoutForm(createEmptyCheckoutFormState());
+    enforceZeroPersistentPiiStorage();
     resetSessionTelemetry();
     setBuyerStep('catalog');
     window.scrollTo({ top: 0, behavior: 'smooth' });

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ArrowLeft,
   Calendar,
@@ -8,9 +8,19 @@ import {
   QrCode,
   Smartphone,
 } from 'lucide-react';
-import { BuyerCheckoutForm, EventItem } from '../types/veloztix';
+import {
+  BuyerCheckoutForm,
+  calculateVelozTixPricing,
+  EventItem,
+} from '../types/veloztix';
 import { EventPosterArt } from '../components/EventPosterArt';
 import { maskCedula } from '../utils/privacyCrypto';
+import {
+  enforceZeroPersistentPiiStorage,
+  sanitizeDigitsInput,
+  sanitizeEmailInput,
+  sanitizeTextInput,
+} from '../utils/security';
 
 interface BuyerCheckoutViewProps {
   event: EventItem;
@@ -41,8 +51,14 @@ export const BuyerCheckoutView: React.FC<BuyerCheckoutViewProps> = ({
 }) => {
   const [validationError, setValidationError] = useState<string | null>(null);
 
-  const totalUsd = Number((quantity * event.priceUsd).toFixed(2));
-  const totalBs = Number((quantity * event.priceBs).toFixed(2));
+  useEffect(() => {
+    enforceZeroPersistentPiiStorage();
+    return () => {
+      enforceZeroPersistentPiiStorage();
+    };
+  }, []);
+
+  const pricing = calculateVelozTixPricing(event.priceUsd, quantity);
 
   const maskedPreview = form.cedulaDigits
     ? maskCedula(form.docPrefix, form.cedulaDigits)
@@ -128,13 +144,17 @@ export const BuyerCheckoutView: React.FC<BuyerCheckoutViewProps> = ({
                 <input
                   id="buyer-name"
                   type="text"
+                  autoComplete="off"
                   placeholder="Ej. Valentina Morales"
                   value={form.fullName}
                   onFocus={onFieldFocus}
                   onKeyDown={(e) => onFieldKeyDown(e.key)}
                   onPaste={onFieldPaste}
                   onChange={(e) =>
-                    onChangeForm({ ...form, fullName: e.target.value })
+                    onChangeForm({
+                      ...form,
+                      fullName: sanitizeTextInput(e.target.value, 80),
+                    })
                   }
                   className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-sm text-white placeholder-zinc-500 transition focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500"
                 />
@@ -168,6 +188,7 @@ export const BuyerCheckoutView: React.FC<BuyerCheckoutViewProps> = ({
                       id="buyer-cedula"
                       type="text"
                       inputMode="numeric"
+                      autoComplete="off"
                       placeholder="28445892"
                       value={form.cedulaDigits}
                       onFocus={onFieldFocus}
@@ -176,7 +197,7 @@ export const BuyerCheckoutView: React.FC<BuyerCheckoutViewProps> = ({
                       onChange={(e) =>
                         onChangeForm({
                           ...form,
-                          cedulaDigits: e.target.value.replace(/\D/g, '').slice(0, 9),
+                          cedulaDigits: sanitizeDigitsInput(e.target.value, 9),
                         })
                       }
                       className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-sm text-white placeholder-zinc-500 transition focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500"
@@ -213,6 +234,7 @@ export const BuyerCheckoutView: React.FC<BuyerCheckoutViewProps> = ({
                       id="buyer-phone"
                       type="text"
                       inputMode="numeric"
+                      autoComplete="off"
                       placeholder="5524821"
                       value={form.phoneDigits}
                       onFocus={onFieldFocus}
@@ -221,7 +243,7 @@ export const BuyerCheckoutView: React.FC<BuyerCheckoutViewProps> = ({
                       onChange={(e) =>
                         onChangeForm({
                           ...form,
-                          phoneDigits: e.target.value.replace(/\D/g, '').slice(0, 7),
+                          phoneDigits: sanitizeDigitsInput(e.target.value, 7),
                         })
                       }
                       className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-sm text-white placeholder-zinc-500 transition focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500"
@@ -241,13 +263,17 @@ export const BuyerCheckoutView: React.FC<BuyerCheckoutViewProps> = ({
                 <input
                   id="buyer-email"
                   type="email"
+                  autoComplete="off"
                   placeholder="valentina@correo.com"
                   value={form.email}
                   onFocus={onFieldFocus}
                   onKeyDown={(e) => onFieldKeyDown(e.key)}
                   onPaste={onFieldPaste}
                   onChange={(e) =>
-                    onChangeForm({ ...form, email: e.target.value })
+                    onChangeForm({
+                      ...form,
+                      email: sanitizeEmailInput(e.target.value, 100),
+                    })
                   }
                   className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-sm text-white placeholder-zinc-500 transition focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500"
                 />
@@ -334,7 +360,14 @@ export const BuyerCheckoutView: React.FC<BuyerCheckoutViewProps> = ({
                   {quantity} × Entrada General (${event.priceUsd.toFixed(2)})
                 </span>
                 <span className="font-semibold text-white">
-                  ${totalUsd.toFixed(2)}
+                  ${pricing.subtotalUsd.toFixed(2)}
+                </span>
+              </div>
+
+              <div className="flex justify-between gap-3 text-zinc-300">
+                <span>Tarifa de servicio VelozTix: 4.5% + $0.20 por entrada</span>
+                <span className="shrink-0 font-semibold text-white">
+                  ${pricing.totalCommissionUsd.toFixed(2)}
                 </span>
               </div>
 
@@ -344,16 +377,29 @@ export const BuyerCheckoutView: React.FC<BuyerCheckoutViewProps> = ({
               </div>
 
               <div className="flex items-baseline justify-between border-t border-zinc-800 pt-3">
-                <span className="text-base font-bold text-white">Total</span>
+                <span className="text-base font-bold text-white">Total a pagar</span>
                 <div className="text-right">
                   <span className="block text-2xl font-extrabold text-emerald-400">
-                    Bs. {totalBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })}
+                    Bs.{' '}
+                    {pricing.totalBs.toLocaleString('es-VE', {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2,
+                    })}
                   </span>
                   <span className="text-xs text-zinc-400">
-                    Equivalente a ${totalUsd.toFixed(2)} USD
+                    Equivalente a ${pricing.totalUsd.toFixed(2)} USD
                   </span>
                 </div>
               </div>
+
+              <p className="pt-1 text-xs leading-relaxed text-zinc-400">
+                Tarifa de servicio VelozTix:{' '}
+                <strong className="text-zinc-200">
+                  4.5% + $0.20 por entrada
+                </strong>{' '}
+                (${pricing.percentageFeeUsd.toFixed(2)} + $
+                {pricing.flatFeeUsd.toFixed(2)}).
+              </p>
             </div>
           </div>
         </div>

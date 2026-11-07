@@ -104,10 +104,16 @@ export const PaymentQRView: React.FC<PaymentQRViewProps> = ({
                 Bs.{' '}
                 {order.totalBs.toLocaleString('es-VE', {
                   minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
                 })}
               </span>
               <span className="text-xs text-zinc-400">
                 Equivalente a ${order.totalUsd.toFixed(2)} USD
+              </span>
+              <span className="mt-1 text-[11px] text-zinc-500">
+                Entradas: ${order.subtotalTicketsUsd.toFixed(2)} + Tarifa de
+                servicio VelozTix: 4.5% + $0.20 por entrada ($
+                {order.totalCommissionUsd.toFixed(2)})
               </span>
             </div>
           </div>

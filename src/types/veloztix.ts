@@ -69,6 +69,52 @@ export interface PagoMovilInstructions {
   ttlSeconds: number;
 }
 
+export const COMMISSION_RATE = 0.045; // Esquema mixto VelozTix: 4.5% + $0.20 USD por entrada
+export const FLAT_FEE_PER_TICKET_USD = 0.2;
+export const BCV_RATE_BS = 45.0;
+
+export interface OrderPricingBreakdown {
+  subtotalUsd: number;
+  percentageFeeUsd: number;
+  flatFeeUsd: number;
+  totalCommissionUsd: number;
+  totalUsd: number;
+  totalBs: number;
+  netOrganizerUsd: number;
+}
+
+/**
+ * Fórmula central de comisión mixta VelozTix (4.5% + $0.20 por entrada):
+ * - subtotal = N * P
+ * - comision_porcentual = subtotal * 0.045
+ * - comision_fija = N * 0.20
+ * - comision_total_veloztix = comision_porcentual + comision_fija
+ */
+export function calculateVelozTixPricing(
+  unitPriceUsd: number,
+  quantity: number
+): OrderPricingBreakdown {
+  const subtotal = Number((quantity * unitPriceUsd).toFixed(2));
+  const comisionPorcentual = Number((subtotal * COMMISSION_RATE).toFixed(2));
+  const comisionFija = Number((quantity * FLAT_FEE_PER_TICKET_USD).toFixed(2));
+  const comisionTotalVeloztix = Number(
+    (comisionPorcentual + comisionFija).toFixed(2)
+  );
+  const totalUsd = Number((subtotal + comisionTotalVeloztix).toFixed(2));
+  const totalBs = Number((totalUsd * BCV_RATE_BS).toFixed(2));
+  const netOrganizerUsd = Number((totalUsd - comisionTotalVeloztix).toFixed(2));
+
+  return {
+    subtotalUsd: subtotal,
+    percentageFeeUsd: comisionPorcentual,
+    flatFeeUsd: comisionFija,
+    totalCommissionUsd: comisionTotalVeloztix,
+    totalUsd,
+    totalBs,
+    netOrganizerUsd,
+  };
+}
+
 export interface TicketOrder {
   id: string; // Ej: VT-84920
   eventId: string;
@@ -79,10 +125,13 @@ export interface TicketOrder {
   posterTheme: PosterTheme;
   quantity: number;
   unitPriceUsd: number;
+  subtotalTicketsUsd: number;
+  percentageFeeUsd: number;
+  flatFeeUsd: number;
+  totalCommissionUsd: number; // Comisión VelozTix (4.5% + $0.20/ticket)
   totalUsd: number;
   totalBs: number;
-  commissionUsd: number; // 4.5%
-  netOrganizerUsd: number; // 95.5%
+  netOrganizerUsd: number; // Total Recaudado - Comisión Total VelozTix
   status: OrderCommercialStatus;
   createdAtIso: string;
   buyerName: string;
@@ -108,8 +157,13 @@ export interface ReconciliationRow {
   eventTitle: string;
   buyerDisplay: string;
   quantity: number;
+  subtotalTicketsUsd: number;
   amountUsd: number;
   amountBs: number;
+  percentageFeeUsd: number;
+  flatFeeUsd: number;
+  veloztixCommissionUsd: number;
+  netOrganizerUsd: number;
   paymentRef: string;
   state: ReconciliationRowState;
   note: string;
