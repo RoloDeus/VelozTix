@@ -13,7 +13,7 @@ export function createOrdersRouter(
 ): Router {
   const router = Router();
   const auth = createAuthMiddleware(apiKey, bearerToken);
-  const idempotency = createIdempotencyMiddleware(redis, true);
+  const idempotency = createIdempotencyMiddleware(redis, { required: true, mode: 'order' });
 
   // POST /api/v1/orders/authorize
   router.post(

@@ -91,7 +91,8 @@ export interface OrderStatusResponseDto {
     | 'CAPTURED'
     | 'SETTLED'
     | 'REVERSED'
-    | 'RECONCILED';
+    | 'RECONCILED'
+    | 'REFUND_PENDING';
   amount_bs: number;
   payment_reference: string | null;
   ticket_qr: string | null;

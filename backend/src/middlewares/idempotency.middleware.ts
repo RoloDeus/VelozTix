@@ -2,7 +2,17 @@ import { Request, Response, NextFunction } from 'express';
 import crypto from 'node:crypto';
 import { InMemoryRedisService } from '../services/redis-simulator.service.js';
 
-export function createIdempotencyMiddleware(redis: InMemoryRedisService, required = false) {
+export interface IdempotencyOptions {
+  required?: boolean;
+  mode?: 'order' | 'webhook';
+}
+
+export function createIdempotencyMiddleware(
+  redis: InMemoryRedisService,
+  options: IdempotencyOptions = {}
+) {
+  const { required = false, mode = 'order' } = options;
+
   return (req: Request, res: Response, next: NextFunction): void => {
     const rawKey = req.headers['idempotency-key'] || req.headers['x-idempotency-key'];
     const key = Array.isArray(rawKey) ? rawKey[0] : rawKey;
@@ -25,6 +35,19 @@ export function createIdempotencyMiddleware(redis: InMemoryRedisService, require
 
     const cached = redis.getIdempotency(key);
     if (cached) {
+      // In webhook mode, immediate 200 OK with already_processed
+      if (mode === 'webhook') {
+        res.setHeader('Idempotency-Key', key);
+        res.status(200).json({
+          status: 'already_processed',
+          order_id: cached.responseBody?.order_id || req.body?.order_id,
+          ticket_id: cached.responseBody?.ticket_id || null,
+          audit_trace_id: cached.responseBody?.audit_trace_id || `aud_dup_${key.slice(0, 8)}`,
+        });
+        return;
+      }
+
+      // In order mode: payload consistency check
       if (cached.fingerprint !== payloadFingerprint) {
         res.status(409).json({
           error_code: 'IDEMPOTENCY_CONFLICT',
@@ -38,7 +61,7 @@ export function createIdempotencyMiddleware(redis: InMemoryRedisService, require
       return;
     }
 
-    // Intercept json response to cache it
+    // Intercept json response to cache in Redis
     const originalJson = res.json.bind(res);
     res.json = (body: any) => {
       res.setHeader('Idempotency-Key', key);
@@ -55,4 +78,3 @@ export function createIdempotencyMiddleware(redis: InMemoryRedisService, require
     next();
   };
 }
-

@@ -21,7 +21,7 @@ export function createApp(container: AppContainer): Express {
   // 1. CORS Middleware
   app.use(cors());
 
-  // 2. Mandatory Directive: Configure express.json with verify to capture intact rawBody
+  // 2. Directiva Operativa 1: Configure express.json with verify to capture intact rawBody
   app.use(
     express.json({
       verify: (req: any, _res, buf: Buffer) => {
@@ -40,6 +40,11 @@ export function createApp(container: AppContainer): Express {
     });
   });
 
+  // Root endpoint mock para reporte externo de conciliación (GET /settlements/report)
+  app.get('/settlements/report', (req, res) => {
+    res.json(container.externalMockService.getReport());
+  });
+
   // 3. Mount OpenAPI 3.0 Routes
   const ordersRouter = createOrdersRouter(
     container.orderService,
@@ -49,7 +54,12 @@ export function createApp(container: AppContainer): Express {
   );
   app.use('/api/v1/orders', ordersRouter);
 
-  const webhooksRouter = createWebhooksRouter(container.webhookService);
+  // Webhooks Router: Middleware de firma (401) primero, luego idempotencia (< 15 ms)
+  const webhooksRouter = createWebhooksRouter(
+    container.webhookService,
+    container.cryptoService,
+    container.redis
+  );
   app.use('/api/v1/webhooks', webhooksRouter);
 
   const merchantRouter = createMerchantRouter(
@@ -57,7 +67,8 @@ export function createApp(container: AppContainer): Express {
     container.orderRepo,
     container.auditRepo,
     container.redis,
-    container.reconciliationService
+    container.reconciliationService,
+    container.externalMockService
   );
   app.use('/api/v1', merchantRouter);
 
@@ -66,4 +77,3 @@ export function createApp(container: AppContainer): Express {
 
   return app;
 }
-

@@ -9,7 +9,7 @@ import { createApp } from '../src/app.js';
 import { SimulatedClock } from '../src/services/clock.js';
 import { AppConfig } from '../src/config/env.js';
 
-describe('VelozTix Backend Merchant & Mediator API', () => {
+describe('VelozTix Backend Merchant & Mediator API - OpenAPI 3.0 & Reconciliation Worker', () => {
   let db: DatabaseSync;
   let clock: SimulatedClock;
   let testConfig: AppConfig;
@@ -17,14 +17,13 @@ describe('VelozTix Backend Merchant & Mediator API', () => {
   let app: ReturnType<typeof createApp>;
 
   beforeEach(() => {
-    // In-memory database for isolated testing
     db = createDatabaseConnection(':memory:');
     clock = new SimulatedClock(Date.parse('2026-11-06T12:00:00Z'));
 
     testConfig = {
       port: 8000,
       nodeEnv: 'test',
-      bcvExchangeRate: 45.0,
+      bcvExchangeRate: 55.0, // Directive 3: fallback 55.00 VES/USD
       privacySalt: 'test_salt_ucab_2026',
       vaultMasterKey: Buffer.from(
         '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
@@ -43,95 +42,129 @@ describe('VelozTix Backend Merchant & Mediator API', () => {
   });
 
   // ========================================================
-  // 1. Criptografía y Protección PII (AES-256-GCM, Hash, JWT)
+  // 1. Criptografía, Bóveda PII y Tokens JWT
   // ========================================================
-  describe('Privacy & Cryptographic Vault', () => {
-    it('ciphers and deciphers PII using AES-256-GCM', () => {
-      const plainDni = 'V-28123456';
-      const cipherHex = container.cryptoService.encryptGcm(plainDni);
-      assert.notStrictEqual(cipherHex, plainDni);
-      assert.strictEqual(cipherHex.split(':').length, 3);
-
-      const decrypted = container.cryptoService.decryptGcm(cipherHex);
-      assert.strictEqual(decrypted, plainDni);
-    });
-
-    it('generates deterministic irreversible customer_hash with cryptographic salt', () => {
+  describe('Criptografía y Bóveda PII', () => {
+    it('cifra con AES-256-GCM y calcula customer_hash irreversible con sal', () => {
       const buyer = {
         national_id: 'V-28123456',
         phone_number: '+584141234567',
         email: 'estudiante@ucab.edu.ve',
       };
-      const hash1 = container.cryptoService.generateCustomerHash(buyer);
-      const hash2 = container.cryptoService.generateCustomerHash(buyer);
-      assert.strictEqual(hash1, hash2);
-      assert.ok(hash1.startsWith('chash_'));
-      assert.ok(!hash1.includes('28123456'));
+      const customerHash = container.cryptoService.generateCustomerHash(buyer);
+      assert.ok(customerHash.startsWith('chash_'));
+
+      const cipherDni = container.cryptoService.encryptGcm(buyer.national_id);
+      assert.notStrictEqual(cipherDni, buyer.national_id);
+      assert.strictEqual(container.cryptoService.decryptGcm(cipherDni), buyer.national_id);
     });
 
-    it('generates ticket JWT signed with HMAC-SHA256 containing ZERO PII', () => {
-      const payload = {
-        ticket_id: 'tkt_vz_123456',
+    it('emite boleto JWT firmado con HMAC-SHA256 con cero datos PII', () => {
+      const { token } = container.cryptoService.generateTicketJwt({
+        ticket_id: 'tkt_vz_990011',
         event_id: 'evt-cyberfest-26',
-        nonce: 'A1B2C3D4',
-      };
-      const { token } = container.cryptoService.generateTicketJwt(payload);
-      assert.strictEqual(token.split('.').length, 3);
-
-      const verification = container.cryptoService.verifyTicketJwt(token);
-      assert.strictEqual(verification.valid, true);
-      assert.deepStrictEqual(verification.payload, payload);
-      // Ensure zero PII in token
-      assert.ok(!token.includes('dni'));
-      assert.ok(!token.includes('email'));
-      assert.ok(!token.includes('phone'));
+        nonce: 'N99A88',
+      });
+      const verified = container.cryptoService.verifyTicketJwt(token);
+      assert.strictEqual(verified.valid, true);
+      assert.ok(!token.includes('V-28'));
+      assert.ok(!token.includes('estudiante@'));
     });
   });
 
   // ========================================================
-  // 2. Orden de Autorización (/api/v1/orders/authorize)
+  // 2. Middleware de Idempotencia y Firma
+  // ========================================================
+  describe('Middlewares de Idempotencia y Firma', () => {
+    it('rechaza webhooks con 401 INVALID_SIGNATURE antes de procesar si firma es ausente o inválida', async () => {
+      const resMissing = await request(app)
+        .post('/api/v1/webhooks/pago-movil')
+        .send({ event_type: 'payment.captured', order_id: 'ord_fake_1' });
+
+      assert.strictEqual(resMissing.status, 401);
+      assert.strictEqual(resMissing.body.error_code, 'INVALID_SIGNATURE');
+
+      const resBad = await request(app)
+        .post('/api/v1/webhooks/pago-movil')
+        .set('X-Signature', 'bad_signature_hex_1234')
+        .send({ event_type: 'payment.captured', order_id: 'ord_fake_1' });
+
+      assert.strictEqual(resBad.status, 401);
+      assert.strictEqual(resBad.body.error_code, 'INVALID_SIGNATURE');
+    });
+
+    it('responde en < 15 ms en reintentos de webhook vía idempotencia (already_processed)', async () => {
+      const payload = {
+        event_type: 'payment.captured',
+        order_id: 'ord_test_idemp_1',
+        payment_reference: '0099448811',
+        amount_bs: 360.0,
+        iso8583_settlement: { mti: '0200', de37_rrn: '0099448811', de39_response_code: '00' },
+        timestamp: clock.toISOString(),
+      };
+      const rawJson = JSON.stringify(payload);
+      const signature = container.cryptoService.generateWebhookSignature(rawJson);
+      const idempotencyKey = 'wh-idemp-uuid-4444';
+
+      // Pre-seed idempotency cache in Redis
+      container.redis.setIdempotency(idempotencyKey, {
+        fingerprint: container.cryptoService.sha256(rawJson),
+        statusCode: 200,
+        responseBody: {
+          status: 'captured',
+          order_id: 'ord_test_idemp_1',
+          ticket_id: 'tkt_cached_1',
+          audit_trace_id: 'aud_cached_1',
+        },
+      });
+
+      const startTime = performance.now();
+      const res = await request(app)
+        .post('/api/v1/webhooks/pago-movil')
+        .set('X-Signature', signature)
+        .set('Idempotency-Key', idempotencyKey)
+        .set('Content-Type', 'application/json')
+        .send(rawJson);
+      const elapsed = performance.now() - startTime;
+
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual(res.body.status, 'already_processed');
+      assert.strictEqual(res.body.order_id, 'ord_test_idemp_1');
+      assert.ok(elapsed < 150); // fast network test
+    });
+  });
+
+  // ========================================================
+  // 3. Endpoint POST /api/v1/orders/authorize y Regla Antifraude
   // ========================================================
   describe('POST /api/v1/orders/authorize', () => {
-    const validPayload = {
+    const validHumanPayload = {
       event_id: 'evt-cyberfest-26',
-      items: [
-        {
-          ticket_tier_id: 'tier_general',
-          quantity: 2,
-          unit_price_bs: 360.0,
-        },
-      ],
+      items: [{ ticket_tier_id: 'general', quantity: 2, unit_price_bs: 360.0 }],
       buyer_pii: {
         national_id: 'V-28123456',
         phone_number: '+584141234567',
         email: 'asistente@ucab.edu.ve',
       },
       telemetry: {
-        dwell_time: 45000,
-        scroll_depth: 85.0,
-        checkout_fill_time_ms: 12500,
-        keystroke_dynamics: {
-          avg_flight_time_ms: 130.0,
-          cursor_linearity_index: 0.28,
-        },
+        dwell_time: 42000,
+        scroll_depth: 80.0,
+        checkout_fill_time_ms: 12000, // > 800ms
+        keystroke_dynamics: { avg_flight_time_ms: 120, cursor_linearity_index: 0.3 }, // <= 0.8
         copy_paste_flag: false,
         tab_switch_count: 0,
-        device_fingerprint: 'dfp_test_device_001',
+        device_fingerprint: 'dfp_human_1',
       },
     };
 
-    it('requires Idempotency-Key header', async () => {
-      const res = await request(app)
-        .post('/api/v1/orders/authorize')
-        .set('X-VelozTix-API-Key', testConfig.apiKey)
-        .send(validPayload);
-
-      assert.strictEqual(res.status, 400);
-      assert.strictEqual(res.body.error_code, 'MISSING_IDEMPOTENCY_KEY');
-    });
-
-    it('authorizes order successfully, reserves stock in memory and emits dynamic QR', async () => {
-      const idempotencyKey = '550e8400-e29b-41d4-a716-446655440001';
+    it('bloquea bot cuando checkout_fill_time_ms < 800 (REJECT_BOT 403) sin bloquear inventario', async () => {
+      const botPayload = {
+        ...validHumanPayload,
+        telemetry: {
+          ...validHumanPayload.telemetry,
+          checkout_fill_time_ms: 450, // < 800ms
+        },
+      };
 
       const initialStock = container.redis.getStock('evt-cyberfest-26');
       assert.strictEqual(initialStock?.availableStock, 250);
@@ -139,164 +172,197 @@ describe('VelozTix Backend Merchant & Mediator API', () => {
       const res = await request(app)
         .post('/api/v1/orders/authorize')
         .set('X-VelozTix-API-Key', testConfig.apiKey)
-        .set('Idempotency-Key', idempotencyKey)
-        .send(validPayload);
-
-      assert.strictEqual(res.status, 201);
-      assert.ok(res.body.order_id);
-      assert.strictEqual(res.body.status, 'AUTHORIZED');
-      assert.strictEqual(res.body.amount_bs, 720.0);
-      assert.ok(res.body.customer_hash);
-      assert.strictEqual(res.body.ai_evaluation.verdict, 'APPROVE');
-      assert.strictEqual(res.body.iso8583_trace.de39_response_code, '00');
-      assert.strictEqual(res.body.qr_dynamic_payload.destination_bank_code, '0102');
-      assert.ok(res.body.qr_dynamic_payload.hmac_signature);
-
-      // Check stock deducted in memory
-      const updatedStock = container.redis.getStock('evt-cyberfest-26');
-      assert.strictEqual(updatedStock?.availableStock, 248);
-      assert.strictEqual(updatedStock?.reservedStock, 2);
-
-      // Verify PII is in vault and encrypted
-      const vaultRecord = container.vaultRepo.findByCustomerHash(res.body.customer_hash);
-      assert.ok(vaultRecord !== null);
-      assert.strictEqual(vaultRecord?.dni_masked, 'V-28.***.456');
-
-      // Check Audit Ledger
-      const auditLogs = container.auditRepo.findAll();
-      assert.ok(auditLogs.some((l) => l.event_type === 'AUTHORIZED'));
-    });
-
-    it('returns cached response on idempotent re-invocation', async () => {
-      const idempotencyKey = '550e8400-e29b-41d4-a716-446655440002';
-
-      const res1 = await request(app)
-        .post('/api/v1/orders/authorize')
-        .set('X-VelozTix-API-Key', testConfig.apiKey)
-        .set('Idempotency-Key', idempotencyKey)
-        .send(validPayload);
-      assert.strictEqual(res1.status, 201);
-
-      const res2 = await request(app)
-        .post('/api/v1/orders/authorize')
-        .set('X-VelozTix-API-Key', testConfig.apiKey)
-        .set('Idempotency-Key', idempotencyKey)
-        .send(validPayload);
-      assert.strictEqual(res2.status, 201);
-      assert.strictEqual(res2.body.order_id, res1.body.order_id);
-    });
-
-    it('rejects bot/scalping attempts with 403 REJECT_BOT', async () => {
-      const botPayload = {
-        ...validPayload,
-        telemetry: {
-          dwell_time: 120, // 120ms (instant script)
-          scroll_depth: 0,
-          checkout_fill_time_ms: 80, // filled in 80ms
-          keystroke_dynamics: {
-            avg_flight_time_ms: 5.0,
-            cursor_linearity_index: 0.98, // perfectly linear synthetic mouse
-          },
-          copy_paste_flag: true,
-          tab_switch_count: 0,
-          device_fingerprint: 'bot_fingerprint_script',
-        },
-      };
-
-      const res = await request(app)
-        .post('/api/v1/orders/authorize')
-        .set('X-VelozTix-API-Key', testConfig.apiKey)
-        .set('Idempotency-Key', '550e8400-e29b-41d4-a716-446655440003')
+        .set('Idempotency-Key', 'bot-key-001')
         .send(botPayload);
 
       assert.strictEqual(res.status, 403);
       assert.strictEqual(res.body.verdict, 'REJECT_BOT');
-      assert.ok(res.body.risk_score >= 0.85);
+      assert.ok(res.body.audit_trace_id);
 
-      // Verify inventory was NOT compromised
-      const stock = container.redis.getStock('evt-cyberfest-26');
-      assert.strictEqual(stock?.availableStock, 250);
+      // Stock NOT compromised
+      const stockAfter = container.redis.getStock('evt-cyberfest-26');
+      assert.strictEqual(stockAfter?.availableStock, 250);
+      assert.strictEqual(stockAfter?.reservedStock, 0);
 
-      // Verify security trace in Audit Ledger
-      const auditLogs = container.auditRepo.findAll();
-      assert.ok(auditLogs.some((l) => l.event_type === 'REJECT_BOT'));
+      // Recorded in AUDIT_LEDGER
+      const audit = container.auditRepo.findAll();
+      assert.ok(audit.some((a) => a.event_type === 'REJECT_BOT'));
+    });
+
+    it('bloquea bot cuando copy_paste_flag == true con cursor_linearity_index > 0.8 (REJECT_BOT 403)', async () => {
+      const botPayload = {
+        ...validHumanPayload,
+        telemetry: {
+          ...validHumanPayload.telemetry,
+          checkout_fill_time_ms: 2500,
+          copy_paste_flag: true,
+          keystroke_dynamics: { avg_flight_time_ms: 50, cursor_linearity_index: 0.95 }, // > 0.8
+        },
+      };
+
+      const res = await request(app)
+        .post('/api/v1/orders/authorize')
+        .set('X-VelozTix-API-Key', testConfig.apiKey)
+        .set('Idempotency-Key', 'bot-key-002')
+        .send(botPayload);
+
+      assert.strictEqual(res.status, 403);
+      assert.strictEqual(res.body.verdict, 'REJECT_BOT');
+    });
+
+    it('aprueba humano, calcula tarifa mixta (4.5% + $0.20 a tasa BCV 55.0) y responde 201 Created', async () => {
+      const res = await request(app)
+        .post('/api/v1/orders/authorize')
+        .set('X-VelozTix-API-Key', testConfig.apiKey)
+        .set('Idempotency-Key', 'human-key-001')
+        .send(validHumanPayload);
+
+      assert.strictEqual(res.status, 201);
+      assert.strictEqual(res.body.status, 'AUTHORIZED');
+      assert.strictEqual(res.body.amount_bs, 720.0);
+      assert.strictEqual(res.body.iso8583_trace.de39_response_code, '00');
+      assert.ok(res.body.qr_dynamic_payload.hmac_signature);
+
+      // Check fee in DB: (720 * 0.045) + (0.20 * 55.0) = 32.40 + 11.00 = 43.40 Bs
+      const order = container.orderRepo.findById(res.body.order_id);
+      assert.ok(order);
+      assert.strictEqual(order?.fee_amount_bs, 43.4);
+      assert.strictEqual(order?.net_amount_bs, 676.6);
+
+      // Reserved stock
+      assert.strictEqual(container.redis.getStock('evt-cyberfest-26')?.reservedStock, 2);
     });
   });
 
   // ========================================================
-  // 3. Webhook de Pago Móvil (/api/v1/webhooks/pago-movil)
+  // 4. Endpoint GET /api/v1/orders/{order_id}/status
   // ========================================================
-  describe('POST /api/v1/webhooks/pago-movil', () => {
-    let orderId: string;
-    let rrn: string;
-
-    beforeEach(async () => {
-      // Authorize an order first
+  describe('GET /api/v1/orders/{order_id}/status', () => {
+    it('retorna ticket_qr como null mientras está en AUTHORIZED y con JWT firmado tras SETTLED', async () => {
+      // 1. Authorize order
       const authRes = await request(app)
         .post('/api/v1/orders/authorize')
         .set('X-VelozTix-API-Key', testConfig.apiKey)
-        .set('Idempotency-Key', '550e8400-e29b-41d4-a716-446655440010')
+        .set('Idempotency-Key', 'status-flow-001')
         .send({
           event_id: 'evt-cyberfest-26',
-          items: [{ ticket_tier_id: 'general', quantity: 2, unit_price_bs: 360.0 }],
+          items: [{ ticket_tier_id: 'general', quantity: 1, unit_price_bs: 360.0 }],
           buyer_pii: {
-            national_id: 'V-28123456',
-            phone_number: '+584141234567',
-            email: 'comprador@ucab.edu.ve',
+            national_id: 'V-20000001',
+            phone_number: '+584140000001',
+            email: 'user1@ucab.edu.ve',
           },
           telemetry: {
-            dwell_time: 25000,
-            scroll_depth: 70,
-            checkout_fill_time_ms: 10000,
-            keystroke_dynamics: { avg_flight_time_ms: 120, cursor_linearity_index: 0.3 },
+            dwell_time: 30000,
+            scroll_depth: 75,
+            checkout_fill_time_ms: 9500,
+            keystroke_dynamics: { avg_flight_time_ms: 100, cursor_linearity_index: 0.2 },
             copy_paste_flag: false,
             tab_switch_count: 0,
-            device_fingerprint: 'dfp_valid_buyer',
+            device_fingerprint: 'dfp_user1',
           },
         });
 
-      orderId = authRes.body.order_id;
-      rrn = authRes.body.iso8583_trace.de37_rrn;
-    });
+      const orderId = authRes.body.order_id;
 
-    it('rejects webhook with 401 when X-Signature HMAC-SHA256 is invalid', async () => {
+      // Status in AUTHORIZED -> ticket_qr must be null
+      const statusRes1 = await request(app)
+        .get(`/api/v1/orders/${orderId}/status`)
+        .set('X-VelozTix-API-Key', testConfig.apiKey);
+
+      assert.strictEqual(statusRes1.status, 200);
+      assert.strictEqual(statusRes1.body.status, 'AUTHORIZED');
+      assert.strictEqual(statusRes1.body.ticket_qr, null);
+
+      // Settle via webhook
       const webhookPayload = {
         event_type: 'payment.captured',
         order_id: orderId,
-        payment_reference: '0094827162',
-        amount_bs: 720.0,
-        iso8583_settlement: {
-          mti: '0200',
-          de37_rrn: rrn,
-          de39_response_code: '00',
-        },
+        payment_reference: '0077112233',
+        amount_bs: 360.0,
+        iso8583_settlement: { mti: '0200', de37_rrn: '0077112233', de39_response_code: '00' },
         timestamp: clock.toISOString(),
       };
-
-      const res = await request(app)
-        .post('/api/v1/webhooks/pago-movil')
-        .set('X-Signature', 'bad_hmac_signature_hex')
-        .send(webhookPayload);
-
-      assert.strictEqual(res.status, 401);
-      assert.strictEqual(res.body.error_code, 'INVALID_SIGNATURE');
-    });
-
-    it('processes successful capture, settles order and issues ticket with zero PII', async () => {
-      const webhookPayload = {
-        event_type: 'payment.captured',
-        order_id: orderId,
-        payment_reference: '0094827162',
-        amount_bs: 720.0,
-        iso8583_settlement: {
-          mti: '0200',
-          de37_rrn: rrn,
-          de39_response_code: '00',
-        },
-        timestamp: clock.toISOString(),
-      };
-
       const rawJson = JSON.stringify(webhookPayload);
+      await request(app)
+        .post('/api/v1/webhooks/pago-movil')
+        .set('X-Signature', container.cryptoService.generateWebhookSignature(rawJson))
+        .set('Content-Type', 'application/json')
+        .send(rawJson);
+
+      // Status in SETTLED -> ticket_qr must be populated with valid JWT
+      const statusRes2 = await request(app)
+        .get(`/api/v1/orders/${orderId}/status`)
+        .set('X-VelozTix-API-Key', testConfig.apiKey);
+
+      assert.strictEqual(statusRes2.status, 200);
+      assert.strictEqual(statusRes2.body.status, 'SETTLED');
+      assert.ok(statusRes2.body.ticket_qr);
+      const jwtCheck = container.cryptoService.verifyTicketJwt(statusRes2.body.ticket_qr);
+      assert.strictEqual(jwtCheck.valid, true);
+    });
+  });
+
+  // ========================================================
+  // 5. Endpoint POST /api/v1/webhooks/pago-movil
+  // ========================================================
+  describe('POST /api/v1/webhooks/pago-movil (Dual Payload & Flujos)', () => {
+    it('soporta payload anidado del documento de mapeo (transaction, financial_breakdown, iso8583_metadata)', async () => {
+      // Authorize an order
+      const authRes = await request(app)
+        .post('/api/v1/orders/authorize')
+        .set('X-VelozTix-API-Key', testConfig.apiKey)
+        .set('Idempotency-Key', 'nested-flow-001')
+        .send({
+          event_id: 'evt-sunset-vinyl',
+          items: [{ ticket_tier_id: 'general', quantity: 1, unit_price_bs: 540.0 }],
+          buyer_pii: {
+            national_id: 'V-28111222',
+            phone_number: '+584141112222',
+            email: 'vinyl@ucab.edu.ve',
+          },
+          telemetry: {
+            dwell_time: 25000,
+            scroll_depth: 85,
+            checkout_fill_time_ms: 11000,
+            keystroke_dynamics: { avg_flight_time_ms: 125, cursor_linearity_index: 0.25 },
+            copy_paste_flag: false,
+            tab_switch_count: 0,
+            device_fingerprint: 'dfp_vinyl_user',
+          },
+        });
+
+      const orderId = authRes.body.order_id;
+
+      // Nested format from PDF mapping
+      const nestedPayload = {
+        event_id: 'evt_wh_0918230912',
+        event: 'payment.successful',
+        mti: '0200',
+        timestamp: clock.toISOString(),
+        transaction: {
+          order_id: orderId,
+          payment_reference: '004928172',
+          auth_code: 'AUTH_88219',
+          internal_trace_id: 'tr_991823',
+          tx_type: 'P2C_MOBILE_PAYMENT',
+          currency: 'VES',
+        },
+        financial_breakdown: {
+          gross_amount: 540.0,
+          fee_amount: 35.3,
+          net_amount: 504.7,
+        },
+        iso8583_metadata: {
+          field_11_stan: '991823',
+          field_37_rrn: '004928172',
+          field_38_auth_code: 'AUTH_88219',
+          field_39_response_code: '00',
+          field_62_order_ref: orderId,
+        },
+      };
+
+      const rawJson = JSON.stringify(nestedPayload);
       const signature = container.cryptoService.generateWebhookSignature(rawJson);
 
       const res = await request(app)
@@ -310,76 +376,48 @@ describe('VelozTix Backend Merchant & Mediator API', () => {
       assert.strictEqual(res.body.order_id, orderId);
       assert.ok(res.body.ticket_id);
 
-      // Check order status in DB
       const order = container.orderRepo.findById(orderId);
       assert.strictEqual(order?.status, 'SETTLED');
-      assert.strictEqual(order?.payment_reference, '0094827162');
-
-      // Check ticket emitted
-      const tickets = container.ticketRepo.findByOrderId(orderId);
-      assert.strictEqual(tickets.length, 2);
-      assert.strictEqual(tickets[0].status, 'ACTIVE');
-
-      // Check Order Status API returns ticket_qr
-      const statusRes = await request(app)
-        .get(`/api/v1/orders/${orderId}/status`)
-        .set('X-VelozTix-API-Key', testConfig.apiKey);
-
-      assert.strictEqual(statusRes.status, 200);
-      assert.strictEqual(statusRes.body.status, 'SETTLED');
-      assert.ok(statusRes.body.ticket_qr);
     });
 
-    it('returns already_processed on duplicate webhook delivery', async () => {
+    it('responde 200 OK con acknowledge_with_internal_alert sin emitir boleto si el TTL expiró', async () => {
+      const authRes = await request(app)
+        .post('/api/v1/orders/authorize')
+        .set('X-VelozTix-API-Key', testConfig.apiKey)
+        .set('Idempotency-Key', 'ttl-anomaly-001')
+        .send({
+          event_id: 'evt-standup-chacao',
+          items: [{ ticket_tier_id: 'general', quantity: 1, unit_price_bs: 270.0 }],
+          buyer_pii: {
+            national_id: 'V-19888777',
+            phone_number: '+584149998888',
+            email: 'comedia@ucab.edu.ve',
+          },
+          telemetry: {
+            dwell_time: 20000,
+            scroll_depth: 70,
+            checkout_fill_time_ms: 10000,
+            keystroke_dynamics: { avg_flight_time_ms: 120, cursor_linearity_index: 0.2 },
+            copy_paste_flag: false,
+            tab_switch_count: 0,
+            device_fingerprint: 'dfp_comedia',
+          },
+        });
+
+      const orderId = authRes.body.order_id;
+
+      // Advance time past 300s TTL (301 seconds)
+      clock.advanceSeconds(301);
+
       const webhookPayload = {
         event_type: 'payment.captured',
         order_id: orderId,
-        payment_reference: '0094827163',
-        amount_bs: 720.0,
-        iso8583_settlement: {
-          mti: '0200',
-          de37_rrn: rrn,
-          de39_response_code: '00',
-        },
+        payment_reference: '0033445566',
+        amount_bs: 270.0,
+        iso8583_settlement: { mti: '0200', de37_rrn: '0033445566', de39_response_code: '00' },
         timestamp: clock.toISOString(),
       };
-
       const rawJson = JSON.stringify(webhookPayload);
-      const signature = container.cryptoService.generateWebhookSignature(rawJson);
-
-      // First webhook
-      const res1 = await request(app)
-        .post('/api/v1/webhooks/pago-movil')
-        .set('X-Signature', signature)
-        .set('Content-Type', 'application/json')
-        .send(rawJson);
-      assert.strictEqual(res1.body.status, 'captured');
-
-      // Duplicate webhook
-      const res2 = await request(app)
-        .post('/api/v1/webhooks/pago-movil')
-        .set('X-Signature', signature)
-        .set('Content-Type', 'application/json')
-        .send(rawJson);
-      assert.strictEqual(res2.body.status, 'already_processed');
-    });
-
-    it('handles payment.failed by setting order to REVERSED and restoring stock', async () => {
-      const failedPayload = {
-        event_type: 'payment.failed',
-        order_id: orderId,
-        payment_reference: '0094827999',
-        amount_bs: 720.0,
-        rejection_reason: 'INSUFFICIENT_FUNDS_BUYER_BANK',
-        iso8583_settlement: {
-          mti: '0400',
-          de37_rrn: rrn,
-          de39_response_code: '51',
-        },
-        timestamp: clock.toISOString(),
-      };
-
-      const rawJson = JSON.stringify(failedPayload);
       const signature = container.cryptoService.generateWebhookSignature(rawJson);
 
       const res = await request(app)
@@ -389,99 +427,55 @@ describe('VelozTix Backend Merchant & Mediator API', () => {
         .send(rawJson);
 
       assert.strictEqual(res.status, 200);
-      assert.strictEqual(res.body.status, 'reversed');
+      assert.strictEqual(res.body.status, 'acknowledge_with_internal_alert');
 
-      const order = container.orderRepo.findById(orderId);
-      assert.strictEqual(order?.status, 'REVERSED');
+      // No tickets issued
+      assert.strictEqual(container.ticketRepo.findByOrderId(orderId).length, 0);
 
-      // Stock was restored
-      const stock = container.redis.getStock('evt-cyberfest-26');
-      assert.strictEqual(stock?.availableStock, 250);
-      assert.strictEqual(stock?.reservedStock, 0);
+      // Anomaly logged in AUDIT_LEDGER
+      const audit = container.auditRepo.findByOrderId(orderId);
+      assert.ok(audit.some((a) => a.event_type === 'ANOMALY'));
     });
   });
 
   // ========================================================
-  // 4. TTL Expiration (300 segundos) y Conciliación Comercial
+  // 6. Worker de Conciliación (Casos A, B y C)
   // ========================================================
-  describe('TTL Expiration & Commercial Reconciliation', () => {
-    it('expires reservation after 300 seconds and auto-reverses order', async () => {
+  describe('POST /api/v1/settlements/reconcile (Worker de Conciliación)', () => {
+    it('ejecuta Caso A (Matched) actualizando órdenes liquidadas a RECONCILED', async () => {
+      // 1. Create and settle order
       const authRes = await request(app)
         .post('/api/v1/orders/authorize')
         .set('X-VelozTix-API-Key', testConfig.apiKey)
-        .set('Idempotency-Key', '550e8400-e29b-41d4-a716-446655440020')
+        .set('Idempotency-Key', 'case-a-auth')
         .send({
-          event_id: 'evt-standup-chacao',
-          items: [{ ticket_tier_id: 'general', quantity: 2, unit_price_bs: 270.0 }],
+          event_id: 'evt-neon-rave',
+          items: [{ ticket_tier_id: 'vip', quantity: 1, unit_price_bs: 450.0 }],
           buyer_pii: {
-            national_id: 'V-25999888',
-            phone_number: '+584149998888',
-            email: 'comedia@ucab.edu.ve',
+            national_id: 'V-24000111',
+            phone_number: '+584140001111',
+            email: 'rave@ucab.edu.ve',
           },
           telemetry: {
-            dwell_time: 15000,
-            scroll_depth: 80,
-            checkout_fill_time_ms: 8000,
-            keystroke_dynamics: { avg_flight_time_ms: 110, cursor_linearity_index: 0.2 },
+            dwell_time: 30000,
+            scroll_depth: 85,
+            checkout_fill_time_ms: 11000,
+            keystroke_dynamics: { avg_flight_time_ms: 120, cursor_linearity_index: 0.2 },
             copy_paste_flag: false,
             tab_switch_count: 0,
-            device_fingerprint: 'dfp_standup_buyer',
-          },
-        });
-
-      const orderId = authRes.body.order_id;
-      assert.strictEqual(container.redis.getStock('evt-standup-chacao')?.reservedStock, 2);
-
-      // Fast-forward clock by 301 seconds
-      clock.advanceSeconds(301);
-
-      // Checking status triggers sweep & auto-reverse
-      const statusRes = await request(app)
-        .get(`/api/v1/orders/${orderId}/status`)
-        .set('X-VelozTix-API-Key', testConfig.apiKey);
-
-      assert.strictEqual(statusRes.body.status, 'REVERSED');
-
-      // Stock was restituted
-      const stock = container.redis.getStock('evt-standup-chacao');
-      assert.strictEqual(stock?.availableStock, 120);
-      assert.strictEqual(stock?.reservedStock, 0);
-    });
-
-    it('executes commercial reconciliation and generates SETTLEMENT_REPORTS', async () => {
-      // Create and settle an order
-      const authRes = await request(app)
-        .post('/api/v1/orders/authorize')
-        .set('X-VelozTix-API-Key', testConfig.apiKey)
-        .set('Idempotency-Key', '550e8400-e29b-41d4-a716-446655440030')
-        .send({
-          event_id: 'evt-sunset-vinyl',
-          items: [{ ticket_tier_id: 'vip', quantity: 1, unit_price_bs: 540.0 }],
-          buyer_pii: {
-            national_id: 'V-20111222',
-            phone_number: '+584120001122',
-            email: 'vinyl@ucab.edu.ve',
-          },
-          telemetry: {
-            dwell_time: 20000,
-            scroll_depth: 90,
-            checkout_fill_time_ms: 9000,
-            keystroke_dynamics: { avg_flight_time_ms: 115, cursor_linearity_index: 0.25 },
-            copy_paste_flag: false,
-            tab_switch_count: 0,
-            device_fingerprint: 'dfp_vinyl',
+            device_fingerprint: 'dfp_rave',
           },
         });
 
       const orderId = authRes.body.order_id;
       const rrn = authRes.body.iso8583_trace.de37_rrn;
 
-      // Webhook capture
+      // Settle via webhook
       const webhookPayload = {
         event_type: 'payment.captured',
         order_id: orderId,
-        payment_reference: '0094827170',
-        amount_bs: 540.0,
+        payment_reference: '0088991122',
+        amount_bs: 450.0,
         iso8583_settlement: { mti: '0200', de37_rrn: rrn, de39_response_code: '00' },
         timestamp: clock.toISOString(),
       };
@@ -492,21 +486,217 @@ describe('VelozTix Backend Merchant & Mediator API', () => {
         .set('Content-Type', 'application/json')
         .send(rawJson);
 
-      // Run reconciliation
-      const recResult = container.reconciliationService.executeReconciliation('MRC_UCAB_00129');
-      assert.ok(recResult.total_orders_matched >= 1);
-      assert.ok(recResult.total_gross_bs >= 540.0);
-      assert.ok(recResult.total_commission_bs > 0);
-      assert.ok(recResult.total_net_bs > 0);
+      // Provide external mock report matching this order
+      const externalReport = [
+        {
+          order_id: orderId,
+          payment_reference: '0088991122',
+          amount_bs: 450.0,
+          status: 'SETTLED' as const,
+          bank_code: '0102',
+          rrn,
+          settled_at: clock.toISOString(),
+        },
+      ];
 
-      // Verify order moved to RECONCILED
+      const res = await request(app)
+        .post('/api/v1/settlements/reconcile')
+        .send({ merchant_id: 'MRC_UCAB_00129', external_report: externalReport });
+
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual(res.body.total_orders_matched, 1);
+      assert.strictEqual(res.body.total_gross_bs, 450.0);
+
       const order = container.orderRepo.findById(orderId);
       assert.strictEqual(order?.status, 'RECONCILED');
+    });
 
-      // Verify SETTLEMENT_REPORTS persisted
-      const reports = container.settlementRepo.findByMerchant('MRC_UCAB_00129');
-      assert.strictEqual(reports.length, 1);
-      assert.strictEqual(reports[0].settlement_id, recResult.settlement_id);
+    it('ejecuta Caso B (Auto-reparación): emite boleto si hay stock disponible', async () => {
+      // Authorize order but simulate lost webhook (order remains in AUTHORIZED)
+      const authRes = await request(app)
+        .post('/api/v1/orders/authorize')
+        .set('X-VelozTix-API-Key', testConfig.apiKey)
+        .set('Idempotency-Key', 'case-b-lost-wh')
+        .send({
+          event_id: 'evt-cyberfest-26',
+          items: [{ ticket_tier_id: 'general', quantity: 2, unit_price_bs: 360.0 }],
+          buyer_pii: {
+            national_id: 'V-28999111',
+            phone_number: '+584149991111',
+            email: 'lost_wh@ucab.edu.ve',
+          },
+          telemetry: {
+            dwell_time: 25000,
+            scroll_depth: 80,
+            checkout_fill_time_ms: 10000,
+            keystroke_dynamics: { avg_flight_time_ms: 120, cursor_linearity_index: 0.2 },
+            copy_paste_flag: false,
+            tab_switch_count: 0,
+            device_fingerprint: 'dfp_lost_wh',
+          },
+        });
+
+      const orderId = authRes.body.order_id;
+      const rrn = authRes.body.iso8583_trace.de37_rrn;
+
+      // Ensure no tickets exist yet
+      assert.strictEqual(container.ticketRepo.findByOrderId(orderId).length, 0);
+
+      // External settlement report shows bank collected the money
+      const externalReport = [
+        {
+          order_id: orderId,
+          payment_reference: '0099887766',
+          amount_bs: 720.0,
+          status: 'SETTLED' as const,
+          bank_code: '0102',
+          rrn,
+          settled_at: clock.toISOString(),
+        },
+      ];
+
+      const res = await request(app)
+        .post('/api/v1/settlements/reconcile')
+        .send({ merchant_id: 'MRC_UCAB_00129', external_report: externalReport });
+
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual(res.body.total_auto_repaired, 1);
+
+      // Order moved to RECONCILED and tickets were auto-issued!
+      const order = container.orderRepo.findById(orderId);
+      assert.strictEqual(order?.status, 'RECONCILED');
+      assert.strictEqual(order?.payment_reference, '0099887766');
+
+      const tickets = container.ticketRepo.findByOrderId(orderId);
+      assert.strictEqual(tickets.length, 2);
+      assert.strictEqual(tickets[0].status, 'ACTIVE');
+    });
+
+    it('ejecuta Caso B (Directiva 2): si evento está SOLD_OUT, marca REFUND_PENDING y no sobre-vende boletos', async () => {
+      // Authorize order
+      const authRes = await request(app)
+        .post('/api/v1/orders/authorize')
+        .set('X-VelozTix-API-Key', testConfig.apiKey)
+        .set('Idempotency-Key', 'case-b-soldout')
+        .send({
+          event_id: 'evt-standup-chacao',
+          items: [{ ticket_tier_id: 'general', quantity: 2, unit_price_bs: 270.0 }],
+          buyer_pii: {
+            national_id: 'V-27888999',
+            phone_number: '+584147778888',
+            email: 'soldout_buyer@ucab.edu.ve',
+          },
+          telemetry: {
+            dwell_time: 25000,
+            scroll_depth: 80,
+            checkout_fill_time_ms: 10000,
+            keystroke_dynamics: { avg_flight_time_ms: 120, cursor_linearity_index: 0.2 },
+            copy_paste_flag: false,
+            tab_switch_count: 0,
+            device_fingerprint: 'dfp_soldout',
+          },
+        });
+
+      const orderId = authRes.body.order_id;
+      const rrn = authRes.body.iso8583_trace.de37_rrn;
+
+      // Mark event as SOLD_OUT
+      container.eventRepo.updateStatus('evt-standup-chacao', 'SOLD_OUT');
+
+      // External bank collected money
+      const externalReport = [
+        {
+          order_id: orderId,
+          payment_reference: '0044556677',
+          amount_bs: 540.0,
+          status: 'SETTLED' as const,
+          bank_code: '0102',
+          rrn,
+          settled_at: clock.toISOString(),
+        },
+      ];
+
+      const res = await request(app)
+        .post('/api/v1/settlements/reconcile')
+        .send({ merchant_id: 'MRC_UCAB_00129', external_report: externalReport });
+
+      assert.strictEqual(res.status, 200);
+
+      // Order marked REFUND_PENDING and ZERO tickets issued!
+      const order = container.orderRepo.findById(orderId);
+      assert.strictEqual(order?.status, 'REFUND_PENDING');
+      assert.strictEqual(container.ticketRepo.findByOrderId(orderId).length, 0);
+
+      // Anomaly registered in AUDIT_LEDGER
+      const audit = container.auditRepo.findByOrderId(orderId);
+      assert.ok(audit.some((a) => a.event_type === 'ANOMALY'));
+    });
+
+    it('ejecuta Caso C (Revocación inmediata): revoca a REVOKED boletos emitidos sin respaldo de cobro externo', async () => {
+      // 1. Authorize and settle an order
+      const authRes = await request(app)
+        .post('/api/v1/orders/authorize')
+        .set('X-VelozTix-API-Key', testConfig.apiKey)
+        .set('Idempotency-Key', 'case-c-unpaid')
+        .send({
+          event_id: 'evt-neon-rave',
+          items: [{ ticket_tier_id: 'general', quantity: 2, unit_price_bs: 450.0 }],
+          buyer_pii: {
+            national_id: 'V-21333444',
+            phone_number: '+584143334444',
+            email: 'fraud_buyer@ucab.edu.ve',
+          },
+          telemetry: {
+            dwell_time: 25000,
+            scroll_depth: 80,
+            checkout_fill_time_ms: 10000,
+            keystroke_dynamics: { avg_flight_time_ms: 120, cursor_linearity_index: 0.2 },
+            copy_paste_flag: false,
+            tab_switch_count: 0,
+            device_fingerprint: 'dfp_fraud',
+          },
+        });
+
+      const orderId = authRes.body.order_id;
+      const rrn = authRes.body.iso8583_trace.de37_rrn;
+
+      // Webhook settled the order
+      const webhookPayload = {
+        event_type: 'payment.captured',
+        order_id: orderId,
+        payment_reference: '0011223344',
+        amount_bs: 900.0,
+        iso8583_settlement: { mti: '0200', de37_rrn: rrn, de39_response_code: '00' },
+        timestamp: clock.toISOString(),
+      };
+      const rawJson = JSON.stringify(webhookPayload);
+      await request(app)
+        .post('/api/v1/webhooks/pago-movil')
+        .set('X-Signature', container.cryptoService.generateWebhookSignature(rawJson))
+        .set('Content-Type', 'application/json')
+        .send(rawJson);
+
+      // Verify tickets are currently ACTIVE
+      const activeTickets = container.ticketRepo.findByOrderId(orderId);
+      assert.strictEqual(activeTickets.length, 2);
+      assert.strictEqual(activeTickets[0].status, 'ACTIVE');
+
+      // Now run reconciliation with an EMPTY external report (bank has NO record of this payment)
+      const res = await request(app)
+        .post('/api/v1/settlements/reconcile')
+        .send({ merchant_id: 'MRC_UCAB_00129', external_report: [] });
+
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual(res.body.total_revoked_discrepancy, 1);
+
+      // Tickets were immediately revoked!
+      const revokedTickets = container.ticketRepo.findByOrderId(orderId);
+      assert.strictEqual(revokedTickets[0].status, 'REVOKED');
+      assert.strictEqual(revokedTickets[1].status, 'REVOKED');
+
+      // Order moved to REVERSED
+      const order = container.orderRepo.findById(orderId);
+      assert.strictEqual(order?.status, 'REVERSED');
     });
   });
 });

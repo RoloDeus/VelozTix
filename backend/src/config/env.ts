@@ -23,7 +23,7 @@ const rawMasterKey =
 export const config: AppConfig = {
   port: Number(process.env.PORT) || 8000,
   nodeEnv: process.env.NODE_ENV || 'development',
-  bcvExchangeRate: Number(process.env.BCV_EXCHANGE_RATE) || 45.0,
+  bcvExchangeRate: Number(process.env.BCV_EXCHANGE_RATE) || 55.0,
   privacySalt: process.env.PRIVACY_SALT || 'vt_ucab_2026_salt',
   vaultMasterKey: Buffer.from(rawMasterKey, 'hex'),
   jwtHmacSecret:

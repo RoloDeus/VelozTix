@@ -5,6 +5,7 @@ import { InMemoryRedisService } from './services/redis-simulator.service.js';
 import { PrivacyCryptoService } from './services/privacy-crypto.service.js';
 import { BehaviorAiService, IBehaviorAiEngine } from './services/ai-scoring.service.js';
 import { IIsoSwitchGateway, Iso8583SwitchSimulator } from './services/iso8583-switch.service.js';
+import { ExternalSettlementMockService } from './services/external-settlement-mock.service.js';
 import { MerchantRepository } from './db/repositories/merchant.repository.js';
 import { EventRepository } from './db/repositories/event.repository.js';
 import { VaultRepository } from './db/repositories/vault.repository.js';
@@ -25,6 +26,7 @@ export interface AppContainer {
   cryptoService: PrivacyCryptoService;
   aiEngine: IBehaviorAiEngine;
   isoSwitch: IIsoSwitchGateway;
+  externalMockService: ExternalSettlementMockService;
   merchantRepo: MerchantRepository;
   eventRepo: EventRepository;
   vaultRepo: VaultRepository;
@@ -46,6 +48,7 @@ export function createContainer(
     startAutoSweep?: boolean;
     aiEngine?: IBehaviorAiEngine;
     isoSwitch?: IIsoSwitchGateway;
+    externalMockService?: ExternalSettlementMockService;
   } = {}
 ): AppContainer {
   const redis = new InMemoryRedisService(clock, options.startAutoSweep ?? true);
@@ -57,6 +60,8 @@ export function createContainer(
   );
   const aiEngine = options.aiEngine ?? new BehaviorAiService();
   const isoSwitch = options.isoSwitch ?? new Iso8583SwitchSimulator();
+  const externalMockService =
+    options.externalMockService ?? new ExternalSettlementMockService();
 
   const merchantRepo = new MerchantRepository(db);
   const eventRepo = new EventRepository(db);
@@ -96,7 +101,12 @@ export function createContainer(
     clock,
     orderRepo,
     settlementRepo,
-    auditRepo
+    auditRepo,
+    ticketRepo,
+    eventRepo,
+    redis,
+    cryptoService,
+    externalMockService
   );
 
   return {
@@ -107,6 +117,7 @@ export function createContainer(
     cryptoService,
     aiEngine,
     isoSwitch,
+    externalMockService,
     merchantRepo,
     eventRepo,
     vaultRepo,
@@ -120,4 +131,3 @@ export function createContainer(
     reconciliationService,
   };
 }
-

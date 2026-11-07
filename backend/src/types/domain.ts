@@ -5,7 +5,8 @@ export type OrderStatus =
   | 'CAPTURED'
   | 'SETTLED'
   | 'REVERSED'
-  | 'RECONCILED';
+  | 'RECONCILED'
+  | 'REFUND_PENDING';
 export type TicketStatus = 'ACTIVE' | 'USED' | 'REVOKED';
 export type Verdict = 'APPROVE' | 'REJECT_BOT';
 export type ProfileTag = 'FAN_DECIDIDO' | 'COMPRADOR_INDECISO' | 'RIESGO_MODERADO';

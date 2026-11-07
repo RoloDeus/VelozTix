@@ -3,6 +3,14 @@ import { IClock } from './clock.js';
 import { OrderRepository } from '../db/repositories/order.repository.js';
 import { SettlementRepository } from '../db/repositories/settlement.repository.js';
 import { AuditRepository } from '../db/repositories/audit.repository.js';
+import { TicketRepository } from '../db/repositories/ticket.repository.js';
+import { EventRepository } from '../db/repositories/event.repository.js';
+import { InMemoryRedisService } from './redis-simulator.service.js';
+import { PrivacyCryptoService } from './privacy-crypto.service.js';
+import {
+  ExternalSettlementMockService,
+  ExternalSettlementRecord,
+} from './external-settlement-mock.service.js';
 import { SettlementReport } from '../types/domain.js';
 
 export interface ReconciliationSummaryResult {
@@ -14,6 +22,12 @@ export interface ReconciliationSummaryResult {
   total_gross_bs: number;
   total_commission_bs: number;
   total_net_bs: number;
+  details?: {
+    matched_order_ids: string[];
+    auto_repaired_order_ids: string[];
+    refund_pending_order_ids: string[];
+    revoked_order_ids: string[];
+  };
   executed_at: string;
 }
 
@@ -22,51 +36,262 @@ export class ReconciliationService {
     private clock: IClock,
     private orderRepo: OrderRepository,
     private settlementRepo: SettlementRepository,
-    private auditRepo: AuditRepository
+    private auditRepo: AuditRepository,
+    private ticketRepo: TicketRepository,
+    private eventRepo: EventRepository,
+    private redis: InMemoryRedisService,
+    private cryptoService: PrivacyCryptoService,
+    private externalMockService: ExternalSettlementMockService
   ) {}
 
-  executeReconciliation(merchantId: string): ReconciliationSummaryResult {
+  executeReconciliation(
+    merchantId: string,
+    providedExternalReport?: ExternalSettlementRecord[]
+  ): ReconciliationSummaryResult {
     const nowIso = this.clock.toISOString();
-    const orders = this.orderRepo.findByMerchant(merchantId);
+    const externalReport =
+      providedExternalReport || this.externalMockService.getReport();
 
-    const eligibleOrders = orders.filter(
-      (o) => o.status === 'SETTLED' || o.status === 'CAPTURED'
-    );
+    // Map external settlements by order_id, payment_reference and rrn
+    const externalMap = new Map<string, ExternalSettlementRecord>();
+    for (const rec of externalReport) {
+      if (rec.order_id) externalMap.set(rec.order_id, rec);
+      if (rec.payment_reference) externalMap.set(rec.payment_reference, rec);
+      if (rec.rrn) externalMap.set(rec.rrn, rec);
+    }
 
+    const localOrders = this.orderRepo.findByMerchant(merchantId);
+
+    let totalOrdersMatched = 0;
+    let totalAutoRepaired = 0;
+    let totalRevokedDiscrepancy = 0;
     let totalGrossBs = 0;
     let totalCommissionBs = 0;
     let totalNetBs = 0;
 
-    for (const order of eligibleOrders) {
-      totalGrossBs += order.gross_amount_bs;
-      totalCommissionBs += order.fee_amount_bs;
-      totalNetBs += order.net_amount_bs;
+    const matchedOrderIds: string[] = [];
+    const autoRepairedOrderIds: string[] = [];
+    const refundPendingOrderIds: string[] = [];
+    const revokedOrderIds: string[] = [];
 
-      // Update to RECONCILED
-      this.orderRepo.updateStatus(order.order_id, 'RECONCILED', null, nowIso);
+    // Track which external records were consumed
+    const processedOrderIds = new Set<string>();
 
-      const auditTraceId = `aud_rec_${crypto.randomBytes(4).toString('hex')}`;
-      this.auditRepo.insert({
-        audit_trace_id: auditTraceId,
-        order_id: order.order_id,
-        session_id: order.session_id,
-        customer_hash: order.customer_hash,
-        event_type: 'RECONCILED',
-        mti_code: '0500', // Settlement reconciliation
-        de11_stan: order.de11_stan,
-        de37_rrn: order.de37_rrn,
-        de39_response_code: '00',
-        metadata_snapshot: JSON.stringify({
-          gross_amount_bs: order.gross_amount_bs,
-          fee_amount_bs: order.fee_amount_bs,
-          net_amount_bs: order.net_amount_bs,
-        }),
-        created_at_utc: nowIso,
-      });
+    // 1. Process all local orders
+    for (const order of localOrders) {
+      processedOrderIds.add(order.order_id);
+      const extRecord =
+        externalMap.get(order.order_id) ||
+        (order.payment_reference ? externalMap.get(order.payment_reference) : undefined) ||
+        (order.de37_rrn ? externalMap.get(order.de37_rrn) : undefined);
+
+      const hasExternalSettledPayment =
+        extRecord &&
+        extRecord.status === 'SETTLED' &&
+        Math.abs(extRecord.amount_bs - order.gross_amount_bs) <= 0.05;
+
+      const hasActiveTickets =
+        this.ticketRepo.findByOrderId(order.order_id).some((t) => t.status === 'ACTIVE');
+
+      // -----------------------------------------------------------------
+      // CASO A: Conciliación exitosa (Orden local SETTLED/CAPTURED con cobro externo coincidente)
+      // -----------------------------------------------------------------
+      if ((order.status === 'SETTLED' || order.status === 'CAPTURED') && hasExternalSettledPayment) {
+        this.orderRepo.updateStatus(order.order_id, 'RECONCILED', order.payment_reference, nowIso);
+
+        const auditTraceId = `aud_rec_${crypto.randomBytes(4).toString('hex')}`;
+        this.auditRepo.insert({
+          audit_trace_id: auditTraceId,
+          order_id: order.order_id,
+          session_id: order.session_id,
+          customer_hash: order.customer_hash,
+          event_type: 'RECONCILED',
+          mti_code: '0500',
+          de11_stan: order.de11_stan,
+          de37_rrn: order.de37_rrn,
+          de39_response_code: '00',
+          metadata_snapshot: JSON.stringify({
+            case: 'CASE_A_MATCHED',
+            gross_amount_bs: order.gross_amount_bs,
+            payment_reference: order.payment_reference,
+          }),
+          created_at_utc: nowIso,
+        });
+
+        totalOrdersMatched++;
+        matchedOrderIds.push(order.order_id);
+        totalGrossBs += order.gross_amount_bs;
+        totalCommissionBs += order.fee_amount_bs;
+        totalNetBs += order.net_amount_bs;
+        continue;
+      }
+
+      // -----------------------------------------------------------------
+      // CASO B: Auto-reparación por webhook perdido
+      // (Orden local en AUTHORIZED / PENDING_PAYMENT / REVERSED, pero existe cobro confirmado en reporte externo)
+      // -----------------------------------------------------------------
+      if (
+        (order.status === 'AUTHORIZED' ||
+          order.status === 'PENDING_PAYMENT' ||
+          order.status === 'REVERSED') &&
+        hasExternalSettledPayment
+      ) {
+        // DIRECTIVA OPERATIVA 2: Validar stock antes de emitir
+        const event = this.eventRepo.findById(order.event_id);
+        const stock = this.redis.getStock(order.event_id);
+        const availableStock = stock ? stock.availableStock : 0;
+        const isEventSoldOut = event?.status === 'SOLD_OUT';
+
+        if (isEventSoldOut || availableStock < order.quantity) {
+          // Evento agotado: marcar para reembolso (REFUND_PENDING) sin sobre-vender
+          this.orderRepo.updateStatus(
+            order.order_id,
+            'REFUND_PENDING',
+            extRecord!.payment_reference,
+            nowIso
+          );
+
+          const auditTraceId = `aud_anom_${crypto.randomBytes(4).toString('hex')}`;
+          this.auditRepo.insert({
+            audit_trace_id: auditTraceId,
+            order_id: order.order_id,
+            session_id: order.session_id,
+            customer_hash: order.customer_hash,
+            event_type: 'ANOMALY',
+            mti_code: '0500',
+            de11_stan: order.de11_stan,
+            de37_rrn: order.de37_rrn,
+            de39_response_code: '51',
+            metadata_snapshot: JSON.stringify({
+              case: 'CASE_B_OVERSELL_PREVENTED_REFUND_PENDING',
+              order_id: order.order_id,
+              requested_qty: order.quantity,
+              available_stock: availableStock,
+              event_status: event?.status,
+            }),
+            created_at_utc: nowIso,
+          });
+
+          refundPendingOrderIds.push(order.order_id);
+          continue;
+        }
+
+        // Hay cupo disponible: emitir boleto y pasar a RECONCILED
+        // Ajustar stock en memoria
+        this.redis.reserveStock(order.event_id, order.order_id, order.quantity, 300);
+        this.redis.confirmReservation(order.order_id);
+
+        this.orderRepo.updateStatus(
+          order.order_id,
+          'RECONCILED',
+          extRecord!.payment_reference,
+          nowIso
+        );
+
+        // Emitir boletos en TICKETS
+        for (let i = 0; i < order.quantity; i++) {
+          const ticketId = `tkt_vz_${Math.floor(100000 + Math.random() * 899999)}`;
+          const nonce = crypto.randomBytes(4).toString('hex').toUpperCase();
+          const { token, hash } = this.cryptoService.generateTicketJwt({
+            ticket_id: ticketId,
+            event_id: order.event_id,
+            nonce,
+          });
+
+          this.ticketRepo.insert({
+            ticket_id: ticketId,
+            order_id: order.order_id,
+            event_id: order.event_id,
+            nonce,
+            token_hash: hash,
+            ticket_qr: token,
+            status: 'ACTIVE',
+            issued_at: nowIso,
+            used_at: null,
+          });
+        }
+
+        const auditTraceId = `aud_rep_${crypto.randomBytes(4).toString('hex')}`;
+        this.auditRepo.insert({
+          audit_trace_id: auditTraceId,
+          order_id: order.order_id,
+          session_id: order.session_id,
+          customer_hash: order.customer_hash,
+          event_type: 'CAPTURED',
+          mti_code: '0200',
+          de11_stan: order.de11_stan,
+          de37_rrn: order.de37_rrn,
+          de39_response_code: '00',
+          metadata_snapshot: JSON.stringify({
+            case: 'CASE_B_AUTO_REPAIRED_LOST_WEBHOOK',
+            order_id: order.order_id,
+            payment_reference: extRecord!.payment_reference,
+            amount_bs: order.gross_amount_bs,
+          }),
+          created_at_utc: nowIso,
+        });
+
+        totalAutoRepaired++;
+        autoRepairedOrderIds.push(order.order_id);
+        totalGrossBs += order.gross_amount_bs;
+        totalCommissionBs += order.fee_amount_bs;
+        totalNetBs += order.net_amount_bs;
+        continue;
+      }
+
+      // -----------------------------------------------------------------
+      // CASO C: Revocación inmediata por discrepancia
+      // (Orden local en CAPTURED/SETTLED o con boletos activos, pero SIN cobro en reporte externo)
+      // -----------------------------------------------------------------
+      if (
+        (order.status === 'CAPTURED' || order.status === 'SETTLED' || hasActiveTickets) &&
+        !hasExternalSettledPayment
+      ) {
+        // Revocar todos los boletos asociados en TICKETS
+        const tickets = this.ticketRepo.findByOrderId(order.order_id);
+        for (const t of tickets) {
+          if (t.status === 'ACTIVE') {
+            this.ticketRepo.updateStatus(t.ticket_id, 'REVOKED', null);
+          }
+        }
+
+        // Restituir inventario en memoria si estaba como vendido
+        const stockState = this.redis.getStock(order.event_id);
+        if (stockState) {
+          stockState.soldStock = Math.max(0, stockState.soldStock - order.quantity);
+          stockState.availableStock += order.quantity;
+        }
+
+        this.orderRepo.updateStatus(order.order_id, 'REVERSED', null, nowIso);
+
+        const auditTraceId = `aud_revk_${crypto.randomBytes(4).toString('hex')}`;
+        this.auditRepo.insert({
+          audit_trace_id: auditTraceId,
+          order_id: order.order_id,
+          session_id: order.session_id,
+          customer_hash: order.customer_hash,
+          event_type: 'ANOMALY',
+          mti_code: '0400',
+          de11_stan: order.de11_stan,
+          de37_rrn: order.de37_rrn,
+          de39_response_code: '12', // Invalid transaction / unpaid
+          metadata_snapshot: JSON.stringify({
+            case: 'CASE_C_UNPAID_TICKET_REVOKED',
+            revoked_tickets_count: tickets.length,
+            order_id: order.order_id,
+          }),
+          created_at_utc: nowIso,
+        });
+
+        totalRevokedDiscrepancy++;
+        revokedOrderIds.push(order.order_id);
+      }
     }
 
+    // 2. Persistir informe en SETTLEMENT_REPORTS
     const settlementId = crypto.randomUUID();
-    const periodStart = orders.length > 0 ? orders[orders.length - 1].created_at : nowIso;
+    const periodStart =
+      localOrders.length > 0 ? localOrders[localOrders.length - 1].created_at : nowIso;
     const periodEnd = nowIso;
 
     const report: SettlementReport = {
@@ -74,9 +299,9 @@ export class ReconciliationService {
       merchant_id: merchantId,
       period_start: periodStart,
       period_end: periodEnd,
-      total_orders_matched: eligibleOrders.length,
-      total_auto_repaired: 0,
-      total_revoked_discrepancy: 0,
+      total_orders_matched: totalOrdersMatched,
+      total_auto_repaired: totalAutoRepaired,
+      total_revoked_discrepancy: totalRevokedDiscrepancy,
       total_gross_bs: Number(totalGrossBs.toFixed(2)),
       total_commission_bs: Number(totalCommissionBs.toFixed(2)),
       total_net_bs: Number(totalNetBs.toFixed(2)),
@@ -88,14 +313,19 @@ export class ReconciliationService {
     return {
       settlement_id: settlementId,
       merchant_id: merchantId,
-      total_orders_matched: report.total_orders_matched,
-      total_auto_repaired: report.total_auto_repaired,
-      total_revoked_discrepancy: report.total_revoked_discrepancy,
+      total_orders_matched: totalOrdersMatched,
+      total_auto_repaired: totalAutoRepaired,
+      total_revoked_discrepancy: totalRevokedDiscrepancy,
       total_gross_bs: report.total_gross_bs,
       total_commission_bs: report.total_commission_bs,
       total_net_bs: report.total_net_bs,
+      details: {
+        matched_order_ids: matchedOrderIds,
+        auto_repaired_order_ids: autoRepairedOrderIds,
+        refund_pending_order_ids: refundPendingOrderIds,
+        revoked_order_ids: revokedOrderIds,
+      },
       executed_at: nowIso,
     };
   }
 }
-
