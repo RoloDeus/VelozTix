@@ -914,4 +914,133 @@ describe('VelozTix Backend Merchant & Mediator API - OpenAPI 3.0 & Reconciliatio
       assert.strictEqual(container.orderRepo.findById(orderId3)?.status, 'RECONCILED');
     });
   });
+
+  // ========================================================
+  // 6. Directivas de Seguridad Financiera (Zero-Trust Frontend)
+  // ========================================================
+  describe('Directivas de Seguridad Financiera (Zero-Trust Frontend)', () => {
+    it('rechaza con 400 PRICE_TAMPERING_DETECTED si el unit_price_bs enviado difiere del precio oficial en EVENTS', async () => {
+      const tamperedPayload = {
+        event_id: 'evt-cyberfest-26', // Precio real en BD: 360.0 Bs
+        items: [{ ticket_tier_id: 'general', quantity: 1, unit_price_bs: 10.0 }], // Manipulado a 10 Bs
+        buyer_pii: {
+          national_id: 'V-28999888',
+          phone_number: '+584149998888',
+          email: 'hacker@test.com',
+        },
+        telemetry: {
+          dwell_time: 15000,
+          scroll_depth: 70,
+          checkout_fill_time_ms: 5000,
+          keystroke_dynamics: { avg_flight_time_ms: 120, cursor_linearity_index: 0.3 },
+          copy_paste_flag: false,
+          tab_switch_count: 0,
+          device_fingerprint: 'dfp_tamper_test',
+        },
+      };
+
+      const res = await request(app)
+        .post('/api/v1/orders/authorize')
+        .set('X-VelozTix-API-Key', testConfig.apiKey)
+        .set('Idempotency-Key', 'idemp_tamper_1')
+        .send(tamperedPayload);
+
+      assert.strictEqual(res.status, 400);
+      assert.strictEqual(res.body.error_code, 'PRICE_TAMPERING_DETECTED');
+    });
+
+    it('permite al endpoint de sandbox /trigger-webhook capturar la orden firmando con HMAC del servidor sin secretos en el cliente', async () => {
+      // 1. Crear orden legítima
+      const authRes = await request(app)
+        .post('/api/v1/orders/authorize')
+        .set('X-VelozTix-API-Key', testConfig.apiKey)
+        .set('Idempotency-Key', 'idemp_sbx_test_1')
+        .send({
+          event_id: 'evt-cyberfest-26',
+          items: [{ ticket_tier_id: 'general', quantity: 1, unit_price_bs: 360.0 }],
+          buyer_pii: {
+            national_id: 'V-29111222',
+            phone_number: '+584141112233',
+            email: 'sbx_buyer@ucab.edu.ve',
+          },
+          telemetry: {
+            dwell_time: 20000,
+            scroll_depth: 80,
+            checkout_fill_time_ms: 6000,
+            keystroke_dynamics: { avg_flight_time_ms: 110, cursor_linearity_index: 0.25 },
+            copy_paste_flag: false,
+            tab_switch_count: 0,
+            device_fingerprint: 'dfp_sbx_test',
+          },
+        });
+
+      assert.strictEqual(authRes.status, 201);
+      const orderId = authRes.body.order_id;
+
+      // 2. Disparar webhook de captura desde /api/v1/sandbox/trigger-webhook (sin secreto en el request)
+      const triggerRes = await request(app)
+        .post('/api/v1/sandbox/trigger-webhook')
+        .send({
+          order_id: orderId,
+          event_type: 'payment.captured',
+        });
+
+      assert.strictEqual(triggerRes.status, 200);
+      assert.strictEqual(triggerRes.body.status, 'captured');
+      assert.ok(triggerRes.body.ticket_id);
+
+      // 3. Verificar que la orden pasó a SETTLED y tiene boleto activo
+      const statusRes = await request(app)
+        .get(`/api/v1/orders/${orderId}/status`)
+        .set('X-VelozTix-API-Key', testConfig.apiKey);
+
+      assert.strictEqual(statusRes.status, 200);
+      assert.strictEqual(statusRes.body.status, 'SETTLED');
+      assert.ok(statusRes.body.ticket_qr);
+    });
+
+    it('aisla BUYERS_PII_VAULT y garantiza minimización de datos en respuestas públicas', async () => {
+      const authRes = await request(app)
+        .post('/api/v1/orders/authorize')
+        .set('X-VelozTix-API-Key', testConfig.apiKey)
+        .set('Idempotency-Key', 'idemp_data_min_1')
+        .send({
+          event_id: 'evt-cyberfest-26',
+          items: [{ ticket_tier_id: 'general', quantity: 1, unit_price_bs: 360.0 }],
+          buyer_pii: {
+            national_id: 'V-27888999',
+            phone_number: '+584148889999',
+            email: 'privacidad@ucab.edu.ve',
+          },
+          telemetry: {
+            dwell_time: 25000,
+            scroll_depth: 85,
+            checkout_fill_time_ms: 7000,
+            keystroke_dynamics: { avg_flight_time_ms: 105, cursor_linearity_index: 0.2 },
+            copy_paste_flag: false,
+            tab_switch_count: 0,
+            device_fingerprint: 'dfp_data_min',
+          },
+        });
+
+      assert.strictEqual(authRes.status, 201);
+      const authBodyStr = JSON.stringify(authRes.body);
+      // No debe contener PII crudo
+      assert.strictEqual(authBodyStr.includes('V-27888999'), false);
+      assert.strictEqual(authBodyStr.includes('+584148889999'), false);
+      assert.strictEqual(authBodyStr.includes('privacidad@ucab.edu.ve'), false);
+      // Debe contener únicamente customer_hash
+      assert.ok(authRes.body.customer_hash.startsWith('chash_'));
+
+      // Verificar status endpoint
+      const statusRes = await request(app)
+        .get(`/api/v1/orders/${authRes.body.order_id}/status`)
+        .set('X-VelozTix-API-Key', testConfig.apiKey);
+
+      const statusBodyStr = JSON.stringify(statusRes.body);
+      assert.strictEqual(statusBodyStr.includes('V-27888999'), false);
+      assert.strictEqual(statusBodyStr.includes('privacidad@ucab.edu.ve'), false);
+      assert.strictEqual(statusBodyStr.includes('encrypted_'), false);
+    });
+  });
 });

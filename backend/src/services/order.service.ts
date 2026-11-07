@@ -93,7 +93,7 @@ export class OrderService {
       };
     }
 
-    // 2. Validate Items & Amount Calculation
+    // 2. Validate Items & Amount Calculation (Zero-Trust Anti Price-Tampering)
     const totalQty = dto.items.reduce((sum, item) => sum + item.quantity, 0);
     if (totalQty <= 0 || totalQty > 10) {
       return {
@@ -104,11 +104,20 @@ export class OrderService {
       };
     }
 
-    const grossAmountBs = Number(
-      dto.items
-        .reduce((sum, item) => sum + item.quantity * item.unit_price_bs, 0)
-        .toFixed(2)
-    );
+    // Validar integridad de precios contra la tabla EVENTS en SQLite
+    for (const item of dto.items) {
+      if (Math.abs(item.unit_price_bs - event.ticket_price_bs) > 0.05) {
+        return {
+          success: false,
+          status: 400,
+          message: `El precio unitario enviado (${item.unit_price_bs} Bs) no coincide con el precio oficial registrado en base de datos (${event.ticket_price_bs} Bs).`,
+          errorCode: 'PRICE_TAMPERING_DETECTED',
+        };
+      }
+    }
+
+    // Cálculo oficial basado exclusivamente en el precio verificado de SQLite
+    const grossAmountBs = Number((totalQty * event.ticket_price_bs).toFixed(2));
 
     // Fee calculation: [gross * 0.045] + [0.20 * bcv_rate]
     const commissionPct = merchant.commission_pct || 0.045;

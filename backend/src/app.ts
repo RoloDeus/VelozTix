@@ -4,6 +4,7 @@ import { AppContainer } from './container.js';
 import { createOrdersRouter } from './routes/orders.routes.js';
 import { createWebhooksRouter } from './routes/webhooks.routes.js';
 import { createMerchantRouter } from './routes/merchant.routes.js';
+import { createSandboxRouter } from './routes/sandbox.routes.js';
 import { errorHandler } from './middlewares/error.middleware.js';
 
 // Extend Express Request type to include rawBody
@@ -72,6 +73,14 @@ export function createApp(container: AppContainer): Express {
     container.externalMockService
   );
   app.use('/api/v1', merchantRouter);
+
+  // Sandbox Router: Zero-Trust Frontend trigger (dispara webhook seguro del lado del servidor)
+  const sandboxRouter = createSandboxRouter(
+    container.orderRepo,
+    container.webhookService,
+    container.cryptoService
+  );
+  app.use('/api/v1/sandbox', sandboxRouter);
 
   // 4. Centralized Error Handler
   app.use(errorHandler);
