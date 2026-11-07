@@ -1,8 +1,12 @@
 import {
+  BCV_RATE_BS,
   BehavioralTelemetryVector,
   BuyerCheckoutForm,
+  calculateVelozTixPricing,
+  COMMISSION_RATE,
   CreateNewEventInput,
   EventItem,
+  FLAT_FEE_PER_TICKET_USD,
   PosterTheme,
   ReconciliationRow,
   TicketOrder,
@@ -14,10 +18,17 @@ import {
   maskEmail,
   maskPhone,
 } from '../utils/privacyCrypto';
+import {
+  computeHmacSha256Signature,
+  enforceZeroPersistentPiiStorage,
+  generateCryptographicNonce,
+  generateIdempotencyKey,
+  getSessionCorrelationId,
+  sanitizeBuyerCheckoutForm,
+  sanitizeOrganizerEventInput,
+} from '../utils/security';
 import { evaluateSilentTelemetry } from '../utils/aiScoringEngine';
 
-const BCV_RATE_BS = 55.0; // Sincronizado con fallback del backend (55.00 VES/USD)
-const VELOZTIX_FEE_PCT = 4.5;
 const BACKEND_BASE_URL = 'http://localhost:8000/api/v1';
 const API_KEY = 'test_api_key_ucab_2026';
 
@@ -26,6 +37,36 @@ let isBackendLive = false;
 
 export function isBackendConnected(): boolean {
   return isBackendLive;
+}
+
+// ============================================================================
+// INTERCEPTOR DE HEADERS SEGUROS EN EL CLIENTE API (APPSEC / PCI-DSS / SUDEBAN)
+// ============================================================================
+
+export async function buildSecureRequestHeaders(
+  payload: unknown
+): Promise<Record<string, string>> {
+  const idempotencyKey = generateIdempotencyKey();
+  const timestamp = String(Date.now());
+  const nonce = generateCryptographicNonce();
+  const correlationId = getSessionCorrelationId();
+  const serializedPayload = JSON.stringify(payload ?? {});
+  const signature = await computeHmacSha256Signature(
+    serializedPayload,
+    timestamp,
+    nonce
+  );
+
+  return {
+    'Content-Type': 'application/json',
+    Accept: 'application/json',
+    'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+    'Idempotency-Key': idempotencyKey,
+    'X-Request-Timestamp': timestamp,
+    'X-Nonce': nonce,
+    'X-Client-Signature': signature,
+    'X-Correlation-ID': correlationId,
+  };
 }
 
 // ============================================================================
@@ -163,6 +204,10 @@ let eventsStore: EventItem[] = [
 // ÓRDENES COMERCIALES INICIALES
 // ============================================================================
 
+const seedOrder1Pricing = calculateVelozTixPricing(8.0, 2);
+const seedOrder2Pricing = calculateVelozTixPricing(12.0, 3);
+const seedOrder3Pricing = calculateVelozTixPricing(6.0, 2);
+
 let ordersStore: TicketOrder[] = [
   {
     id: 'VT-84912',
@@ -174,10 +219,13 @@ let ordersStore: TicketOrder[] = [
     posterTheme: 'violet',
     quantity: 2,
     unitPriceUsd: 8.0,
-    totalUsd: 16.0,
-    totalBs: 880.0,
-    commissionUsd: 0.72,
-    netOrganizerUsd: 15.28,
+    subtotalTicketsUsd: seedOrder1Pricing.subtotalUsd,
+    percentageFeeUsd: seedOrder1Pricing.percentageFeeUsd,
+    flatFeeUsd: seedOrder1Pricing.flatFeeUsd,
+    totalCommissionUsd: seedOrder1Pricing.totalCommissionUsd,
+    totalUsd: seedOrder1Pricing.totalUsd,
+    totalBs: seedOrder1Pricing.totalBs,
+    netOrganizerUsd: seedOrder1Pricing.netOrganizerUsd,
     status: 'paid',
     createdAtIso: new Date(Date.now() - 1000 * 60 * 18).toISOString(),
     buyerName: 'Mariana Gómez',
@@ -191,7 +239,7 @@ let ordersStore: TicketOrder[] = [
       rif: 'J-50482910-3',
       phone: '0414-288-9010',
       conceptRef: 'VT-84912',
-      qrPayload: 'veloztix://pay/VT-84912?bs=880.00',
+      qrPayload: `PAGO_MOVIL|BANCO:0105|RIF:J504829103|TEL:04142889010|MONTO_BS:${seedOrder1Pricing.totalBs.toFixed(2)}|MONTO_USD:${seedOrder1Pricing.totalUsd.toFixed(2)}|REF:VT-84912`,
       expiresAtIso: new Date(Date.now() + 300000).toISOString(),
       ttlSeconds: 300,
     },
@@ -209,10 +257,13 @@ let ordersStore: TicketOrder[] = [
     posterTheme: 'emerald',
     quantity: 3,
     unitPriceUsd: 12.0,
-    totalUsd: 36.0,
-    totalBs: 1980.0,
-    commissionUsd: 1.62,
-    netOrganizerUsd: 34.38,
+    subtotalTicketsUsd: seedOrder2Pricing.subtotalUsd,
+    percentageFeeUsd: seedOrder2Pricing.percentageFeeUsd,
+    flatFeeUsd: seedOrder2Pricing.flatFeeUsd,
+    totalCommissionUsd: seedOrder2Pricing.totalCommissionUsd,
+    totalUsd: seedOrder2Pricing.totalUsd,
+    totalBs: seedOrder2Pricing.totalBs,
+    netOrganizerUsd: seedOrder2Pricing.netOrganizerUsd,
     status: 'paid',
     createdAtIso: new Date(Date.now() - 1000 * 60 * 47).toISOString(),
     buyerName: 'Andrés Salcedo',
@@ -226,7 +277,7 @@ let ordersStore: TicketOrder[] = [
       rif: 'J-50482910-3',
       phone: '0414-288-9010',
       conceptRef: 'VT-84895',
-      qrPayload: 'veloztix://pay/VT-84895?bs=1980.00',
+      qrPayload: `PAGO_MOVIL|BANCO:0105|RIF:J504829103|TEL:04142889010|MONTO_BS:${seedOrder2Pricing.totalBs.toFixed(2)}|MONTO_USD:${seedOrder2Pricing.totalUsd.toFixed(2)}|REF:VT-84895`,
       expiresAtIso: new Date(Date.now() + 300000).toISOString(),
       ttlSeconds: 300,
     },
@@ -244,10 +295,13 @@ let ordersStore: TicketOrder[] = [
     posterTheme: 'amber',
     quantity: 2,
     unitPriceUsd: 6.0,
-    totalUsd: 12.0,
-    totalBs: 660.0,
-    commissionUsd: 0.54,
-    netOrganizerUsd: 11.46,
+    subtotalTicketsUsd: seedOrder3Pricing.subtotalUsd,
+    percentageFeeUsd: seedOrder3Pricing.percentageFeeUsd,
+    flatFeeUsd: seedOrder3Pricing.flatFeeUsd,
+    totalCommissionUsd: seedOrder3Pricing.totalCommissionUsd,
+    totalUsd: seedOrder3Pricing.totalUsd,
+    totalBs: seedOrder3Pricing.totalBs,
+    netOrganizerUsd: seedOrder3Pricing.netOrganizerUsd,
     status: 'cancelled',
     createdAtIso: new Date(Date.now() - 1000 * 60 * 95).toISOString(),
     buyerName: 'Daniela Rivas',
@@ -261,7 +315,7 @@ let ordersStore: TicketOrder[] = [
       rif: 'J-50482910-3',
       phone: '0414-288-9010',
       conceptRef: 'VT-84860',
-      qrPayload: 'veloztix://pay/VT-84860?bs=660.00',
+      qrPayload: `PAGO_MOVIL|BANCO:0105|RIF:J504829103|TEL:04142889010|MONTO_BS:${seedOrder3Pricing.totalBs.toFixed(2)}|MONTO_USD:${seedOrder3Pricing.totalUsd.toFixed(2)}|REF:VT-84860`,
       expiresAtIso: new Date(Date.now() - 300000).toISOString(),
       ttlSeconds: 300,
     },
@@ -275,7 +329,7 @@ let pendingUnmatchedPaymentResolved = false;
 let blockedBotsCount = 24;
 
 // Intento de sincronización silenciosa con el Backend en el inicio
-syncEventsFromBackendSilently();
+void syncEventsFromBackendSilently();
 
 async function syncEventsFromBackendSilently(): Promise<void> {
   try {
@@ -327,7 +381,10 @@ export function incrementEventViewCount(eventId: string): void {
   );
 }
 
-export function createOrganizerEvent(input: CreateNewEventInput): EventItem {
+export function createOrganizerEvent(rawInput: CreateNewEventInput): EventItem {
+  enforceZeroPersistentPiiStorage();
+  const input = sanitizeOrganizerEventInput(rawInput);
+
   const themes: PosterTheme[] = ['violet', 'emerald', 'amber', 'rose'];
   const emojis: Record<EventItem['category'], string> = {
     'Música & Fiestas': '🎵',
@@ -346,9 +403,9 @@ export function createOrganizerEvent(input: CreateNewEventInput): EventItem {
   const newEvent: EventItem = {
     id: `evt-${Date.now().toString(36)}`,
     slug: slug || `evento-${Date.now()}`,
-    title: input.title.trim(),
-    tagline: input.description.trim().slice(0, 95),
-    description: input.description.trim(),
+    title: input.title,
+    tagline: input.description.slice(0, 95),
+    description: input.description,
     highlights: [
       'Entrada digital inmediata pagando con Pago Móvil',
       'Acceso rápido mostrando tu código QR desde el celular',
@@ -359,10 +416,10 @@ export function createOrganizerEvent(input: CreateNewEventInput): EventItem {
     posterEmoji: emojis[input.category] || '✨',
     organizerName: 'Organizador Verificado VelozTix',
     instagramHandle: `@${(slug || 'evento').slice(0, 14)}`,
-    dateLabel: input.dateLabel.trim() || 'Próximamente',
+    dateLabel: input.dateLabel || 'Próximamente',
     shortDateBadge: 'NUEVO',
-    timeLabel: input.timeLabel.trim() || '8:00 PM',
-    venue: input.venue.trim() || 'Caracas',
+    timeLabel: input.timeLabel || '8:00 PM',
+    venue: input.venue || 'Caracas',
     city: 'Caracas',
     priceUsd,
     priceBs,
@@ -383,15 +440,18 @@ export function createOrganizerEvent(input: CreateNewEventInput): EventItem {
 // ============================================================================
 
 /**
- * Paso 1 -> Paso 2: Reserva temporal + Orden QR Dinámico
- * Conexión con POST /api/v1/orders/authorize con fallback transparente en memoria.
+ * Paso 1 -> Paso 2: Reserva temporal de cupos + Generación de Orden QR Dinámico
+ * Conexión con POST /api/v1/orders/authorize con cabeceras seguras y fallback en memoria.
  */
 export async function createTicketReservation(
   eventId: string,
   quantity: number,
-  buyer: BuyerCheckoutForm,
+  rawBuyer: BuyerCheckoutForm,
   telemetry: BehavioralTelemetryVector
 ): Promise<TicketOrder> {
+  enforceZeroPersistentPiiStorage();
+  const buyer = sanitizeBuyerCheckoutForm(rawBuyer);
+
   const event = eventsStore.find((e) => e.id === eventId);
   if (!event) {
     throw new Error('El evento seleccionado no está disponible.');
@@ -400,55 +460,60 @@ export async function createTicketReservation(
     throw new Error('No quedan suficientes cupos disponibles para esta cantidad.');
   }
 
+  const pricing = calculateVelozTixPricing(event.priceUsd, quantity);
+  const maskedCedulaValue = maskCedula(buyer.docPrefix, buyer.cedulaDigits);
+  const maskedPhoneValue = maskPhone(buyer.phonePrefix, buyer.phoneDigits);
+  const maskedEmailValue = maskEmail(buyer.email);
+
   const nationalId = `${buyer.docPrefix}-${buyer.cedulaDigits}`;
   const phoneNumber = `+58${buyer.phonePrefix.replace(/^0/, '')}${buyer.phoneDigits}`;
   const clientOrderId = `VT-${Math.floor(85000 + Math.random() * 14999)}`;
-  const idempotencyKey = `idemp_${clientOrderId}_${Date.now()}`;
+
+  const authorizePayload = {
+    event_id: event.id,
+    items: [
+      {
+        ticket_tier_id: 'general',
+        quantity,
+        unit_price_bs: event.priceBs,
+      },
+    ],
+    buyer_pii: {
+      national_id: nationalId,
+      phone_number: phoneNumber,
+      email: buyer.email,
+    },
+    telemetry: {
+      dwell_time: telemetry.dwell_time_ms,
+      scroll_depth: telemetry.scroll_depth_pct,
+      checkout_fill_time_ms:
+        telemetry.keystroke_dynamics?.checkout_fill_time_ms || 2500,
+      keystroke_dynamics: {
+        avg_flight_time_ms:
+          telemetry.keystroke_dynamics?.avg_inter_key_ms || 120,
+        cursor_linearity_index:
+          telemetry.pointer_events_count > 0 ? 0.35 : 0.82,
+      },
+      copy_paste_flag:
+        telemetry.keystroke_dynamics?.copy_paste_flag ?? false,
+      tab_switch_count: telemetry.tab_switch_count,
+      device_fingerprint: telemetry.device_fingerprint || 'dfp_web_client',
+    },
+  };
 
   // Intento de conexión al Backend Merchant real (POST /api/v1/orders/authorize)
   try {
+    const secureHeaders = await buildSecureRequestHeaders(authorizePayload);
     const response = await fetch(`${BACKEND_BASE_URL}/orders/authorize`, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
+        ...secureHeaders,
         'X-VelozTix-API-Key': API_KEY,
-        'Idempotency-Key': idempotencyKey,
       },
-      body: JSON.stringify({
-        event_id: event.id,
-        items: [
-          {
-            ticket_tier_id: 'general',
-            quantity,
-            unit_price_bs: event.priceBs,
-          },
-        ],
-        buyer_pii: {
-          national_id: nationalId,
-          phone_number: phoneNumber,
-          email: buyer.email,
-        },
-        telemetry: {
-          dwell_time: telemetry.dwell_time_ms,
-          scroll_depth: telemetry.scroll_depth_pct,
-          checkout_fill_time_ms:
-            telemetry.keystroke_dynamics?.checkout_fill_time_ms || 2500,
-          keystroke_dynamics: {
-            avg_flight_time_ms:
-              telemetry.keystroke_dynamics?.avg_inter_key_ms || 120,
-            cursor_linearity_index:
-              telemetry.pointer_events_count > 0 ? 0.35 : 0.82,
-          },
-          copy_paste_flag:
-            telemetry.keystroke_dynamics?.copy_paste_flag ?? false,
-          tab_switch_count: telemetry.tab_switch_count,
-          device_fingerprint: telemetry.device_fingerprint || 'dfp_web_client',
-        },
-      }),
+      body: JSON.stringify(authorizePayload),
     });
 
     if (response.status === 403) {
-      // Bloqueo Anti-Bot del motor de IA del backend
       blockedBotsCount += 1;
       throw new Error(
         'Detectamos un llenado automático inusual. Por favor verifica tus datos e inténtalo de nuevo.'
@@ -459,12 +524,8 @@ export async function createTicketReservation(
       const authData = await response.json();
       isBackendLive = true;
 
-      const totalBs = authData.amount_bs || Number((quantity * event.priceBs).toFixed(2));
-      const totalUsd = Number((quantity * event.priceUsd).toFixed(2));
-      const commissionUsd = Number((totalUsd * (VELOZTIX_FEE_PCT / 100)).toFixed(2));
-      const netOrganizerUsd = Number((totalUsd - commissionUsd).toFixed(2));
+      const totalBs = authData.amount_bs || pricing.totalBs;
 
-      // Actualizar aforo visual
       eventsStore = eventsStore.map((ev) =>
         ev.id === eventId
           ? {
@@ -477,7 +538,7 @@ export async function createTicketReservation(
 
       const dynamicQrString =
         authData.qr_dynamic_payload?.qr_string_token ||
-        `PAGO_MOVIL|BANCO:${authData.qr_dynamic_payload?.destination_bank_code || '0102'}|TEL:${authData.qr_dynamic_payload?.merchant_phone_masked || '0414-4589'}|BS:${totalBs.toFixed(2)}|REF:${authData.order_id}`;
+        `PAGO_MOVIL|BANCO:${authData.qr_dynamic_payload?.destination_bank_code || '0102'}|RIF:${authData.qr_dynamic_payload?.merchant_tax_id || 'J501234567'}|TEL:${authData.qr_dynamic_payload?.merchant_phone_masked || '0414-4589'}|MONTO_BS:${totalBs.toFixed(2)}|MONTO_USD:${pricing.totalUsd.toFixed(2)}|REF:${authData.order_id}`;
 
       const connectedOrder: TicketOrder = {
         id: authData.order_id,
@@ -489,16 +550,19 @@ export async function createTicketReservation(
         posterTheme: event.posterTheme,
         quantity,
         unitPriceUsd: event.priceUsd,
-        totalUsd,
+        subtotalTicketsUsd: pricing.subtotalUsd,
+        percentageFeeUsd: pricing.percentageFeeUsd,
+        flatFeeUsd: pricing.flatFeeUsd,
+        totalCommissionUsd: pricing.totalCommissionUsd,
+        totalUsd: pricing.totalUsd,
         totalBs,
-        commissionUsd,
-        netOrganizerUsd,
+        netOrganizerUsd: pricing.netOrganizerUsd,
         status: 'pending',
         createdAtIso: new Date().toISOString(),
         buyerName: buyer.fullName.trim(),
-        maskedCedula: maskCedula(buyer.docPrefix, buyer.cedulaDigits),
-        maskedPhone: maskPhone(buyer.phonePrefix, buyer.phoneDigits),
-        maskedEmail: maskEmail(buyer.email),
+        maskedCedula: maskedCedulaValue,
+        maskedPhone: maskedPhoneValue,
+        maskedEmail: maskedEmailValue,
         customerHashInternal: authData.customer_hash,
         pagoMovil: {
           bankName: 'Banco de Venezuela (0102)',
@@ -525,21 +589,14 @@ export async function createTicketReservation(
     if (err.message && err.message.includes('llenado automático')) {
       throw err;
     }
-    // Si el backend no está disponible o falla la red, continúa fluidamente en modo autónomo local
     isBackendLive = false;
   }
 
   // ==========================================
-  // FALLBACK AUTÓNOMO 100% EN MEMORIA (Rolando Demo)
+  // FALLBACK AUTÓNOMO 100% EN MEMORIA
   // ==========================================
   const customerHash = await generateCustomerHash(buyer);
   const silentEval = evaluateSilentTelemetry(telemetry);
-
-  console.info('[VelozTix Fallback Telemetry]', {
-    customer_hash: customerHash,
-    telemetry,
-    evaluation: silentEval,
-  });
 
   if (!silentEval.approved) {
     blockedBotsCount += 1;
@@ -558,10 +615,6 @@ export async function createTicketReservation(
       : ev
   );
 
-  const totalUsd = Number((quantity * event.priceUsd).toFixed(2));
-  const totalBs = Number((quantity * event.priceBs).toFixed(2));
-  const commissionUsd = Number((totalUsd * (VELOZTIX_FEE_PCT / 100)).toFixed(2));
-  const netOrganizerUsd = Number((totalUsd - commissionUsd).toFixed(2));
   const ttlSeconds = 300;
   const expiresAtIso = new Date(Date.now() + ttlSeconds * 1000).toISOString();
 
@@ -575,16 +628,19 @@ export async function createTicketReservation(
     posterTheme: event.posterTheme,
     quantity,
     unitPriceUsd: event.priceUsd,
-    totalUsd,
-    totalBs,
-    commissionUsd,
-    netOrganizerUsd,
+    subtotalTicketsUsd: pricing.subtotalUsd,
+    percentageFeeUsd: pricing.percentageFeeUsd,
+    flatFeeUsd: pricing.flatFeeUsd,
+    totalCommissionUsd: pricing.totalCommissionUsd,
+    totalUsd: pricing.totalUsd,
+    totalBs: pricing.totalBs,
+    netOrganizerUsd: pricing.netOrganizerUsd,
     status: 'pending',
     createdAtIso: new Date().toISOString(),
-    buyerName: buyer.fullName.trim(),
-    maskedCedula: maskCedula(buyer.docPrefix, buyer.cedulaDigits),
-    maskedPhone: maskPhone(buyer.phonePrefix, buyer.phoneDigits),
-    maskedEmail: maskEmail(buyer.email),
+    buyerName: buyer.fullName,
+    maskedCedula: maskedCedulaValue,
+    maskedPhone: maskedPhoneValue,
+    maskedEmail: maskedEmailValue,
     customerHashInternal: customerHash,
     pagoMovil: {
       bankName: 'Banco Mercantil (0105)',
@@ -592,7 +648,7 @@ export async function createTicketReservation(
       rif: 'J-50482910-3',
       phone: '0414-288-9010',
       conceptRef: clientOrderId,
-      qrPayload: `PAGO_MOVIL|BANCO:0105|RIF:J504829103|TEL:04142889010|MONTO_BS:${totalBs.toFixed(2)}|REF:${clientOrderId}`,
+      qrPayload: `PAGO_MOVIL|BANCO:0105|RIF:J504829103|TEL:04142889010|MONTO_BS:${pricing.totalBs.toFixed(2)}|MONTO_USD:${pricing.totalUsd.toFixed(2)}|REF:${clientOrderId}`,
       expiresAtIso,
       ttlSeconds,
     },
@@ -609,7 +665,6 @@ export async function createTicketReservation(
 /**
  * Paso 2 -> Paso 3: Confirmación de Pago Móvil y Emisión de Boleto Digital
  * Zero-Trust Frontend: El cliente llama a POST /api/v1/sandbox/trigger-webhook
- * donde el servidor firma el webhook con su WEBHOOK_SECRET privado sin exponer secretos.
  */
 export async function confirmTicketOrderPayment(
   orderId: string
@@ -626,13 +681,15 @@ export async function confirmTicketOrderPayment(
 
   // 1. Intento de disparo a través del Sandbox Seguro en el Backend
   try {
+    const triggerPayload = {
+      order_id: existing.id,
+      event_type: 'payment.captured',
+    };
+    const secureHeaders = await buildSecureRequestHeaders(triggerPayload);
     const triggerRes = await fetch(`${BACKEND_BASE_URL}/sandbox/trigger-webhook`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        order_id: existing.id,
-        event_type: 'payment.captured',
-      }),
+      headers: secureHeaders,
+      body: JSON.stringify(triggerPayload),
     });
 
     if (triggerRes.ok) {
@@ -653,7 +710,6 @@ export async function confirmTicketOrderPayment(
     // Si el backend no responde, gateQr usará el fallback firmado en memoria
   }
 
-  // Si no se obtuvo del backend, fallback local firmado con Web Crypto
   if (!gateQr) {
     gateQr = await generateSignedGateToken(
       existing.id,
@@ -662,7 +718,6 @@ export async function confirmTicketOrderPayment(
     );
   }
 
-  // Actualizar aforo visual
   eventsStore = eventsStore.map((ev) => {
     if (ev.id !== existing.eventId) return ev;
     if (existing.status === 'pending') {
@@ -691,7 +746,6 @@ export async function confirmTicketOrderPayment(
 
 /**
  * Secuencia de Reverso / Anulación: Libera el cupo y cancela la orden
- * Notifica al backend de forma segura mediante el endpoint sandbox en segundo plano.
  */
 export function cancelOrReverseTicketOrder(orderId: string): TicketOrder {
   const existing = ordersStore.find((o) => o.id === orderId);
@@ -702,7 +756,7 @@ export function cancelOrReverseTicketOrder(orderId: string): TicketOrder {
     return existing;
   }
 
-  // Notificación asíncrona segura al backend sandbox (fire-and-forget)
+  // Notificación asíncrona segura al backend sandbox
   fetch(`${BACKEND_BASE_URL}/sandbox/trigger-webhook`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -715,7 +769,6 @@ export function cancelOrReverseTicketOrder(orderId: string): TicketOrder {
     // Silencioso en caso de backend apagado
   });
 
-  // Liberar cupos al inventario disponible
   eventsStore = eventsStore.map((ev) => {
     if (ev.id !== existing.eventId) return ev;
     if (existing.status === 'pending') {
@@ -755,9 +808,13 @@ export function getAllOrders(): TicketOrder[] {
 }
 
 export interface ReconciliationSummary {
+  subtotalTicketsUsd: number;
   grossUsd: number;
   grossBs: number;
-  veloztixFeeUsd: number;
+  reconciledTicketsCount: number;
+  veloztixPercentageFeeUsd: number;
+  veloztixFlatFeeUsd: number;
+  veloztixTotalCommissionUsd: number;
   netOrganizerUsd: number;
   allMatched: boolean;
   pendingCount: number;
@@ -767,21 +824,42 @@ export interface ReconciliationSummary {
 export function getReconciliationSummary(): ReconciliationSummary {
   const paidOrders = ordersStore.filter((o) => o.status === 'paid');
 
-  const rows: ReconciliationRow[] = paidOrders.map((ord) => ({
-    id: `rec-${ord.id}`,
-    orderId: ord.id,
-    eventId: ord.eventId,
-    eventTitle: ord.eventTitle,
-    buyerDisplay: `${ord.buyerName} (${ord.maskedCedula})`,
-    quantity: ord.quantity,
-    amountUsd: ord.totalUsd,
-    amountBs: ord.totalBs,
-    paymentRef: `PM-${ord.id.replace('VT-', '90')}`,
-    state: 'matched',
-    note: 'Pago Móvil verificado y entrada activa',
-  }));
+  const rows: ReconciliationRow[] = paidOrders.map((ord) => {
+    const percentageFeeUsd = Number(
+      (ord.subtotalTicketsUsd * COMMISSION_RATE).toFixed(2)
+    );
+    const flatFeeUsd = Number(
+      (ord.quantity * FLAT_FEE_PER_TICKET_USD).toFixed(2)
+    );
+    const veloztixCommissionUsd = Number(
+      (percentageFeeUsd + flatFeeUsd).toFixed(2)
+    );
+    const netOrganizerUsd = Number(
+      (ord.totalUsd - veloztixCommissionUsd).toFixed(2)
+    );
+
+    return {
+      id: `rec-${ord.id}`,
+      orderId: ord.id,
+      eventId: ord.eventId,
+      eventTitle: ord.eventTitle,
+      buyerDisplay: `${ord.buyerName} (${ord.maskedCedula})`,
+      quantity: ord.quantity,
+      subtotalTicketsUsd: ord.subtotalTicketsUsd,
+      amountUsd: ord.totalUsd,
+      amountBs: ord.totalBs,
+      percentageFeeUsd,
+      flatFeeUsd,
+      veloztixCommissionUsd,
+      netOrganizerUsd,
+      paymentRef: `PM-${ord.id.replace('VT-', '90')}`,
+      state: 'matched',
+      note: 'Pago Móvil verificado y entrada activa',
+    };
+  });
 
   if (!pendingUnmatchedPaymentResolved) {
+    const pendingPricing = calculateVelozTixPricing(8.0, 2);
     rows.unshift({
       id: 'rec-pending-pm',
       orderId: 'VT-84877',
@@ -789,8 +867,13 @@ export function getReconciliationSummary(): ReconciliationSummary {
       eventTitle: 'CyberFest UCAB 2026: Valorant Finals & Indie Party',
       buyerDisplay: 'Carlos Mendoza (V-**.*39.104)',
       quantity: 2,
-      amountUsd: 16.0,
-      amountBs: 880.0,
+      subtotalTicketsUsd: pendingPricing.subtotalUsd,
+      amountUsd: pendingPricing.totalUsd,
+      amountBs: pendingPricing.totalBs,
+      percentageFeeUsd: pendingPricing.percentageFeeUsd,
+      flatFeeUsd: pendingPricing.flatFeeUsd,
+      veloztixCommissionUsd: pendingPricing.totalCommissionUsd,
+      netOrganizerUsd: pendingPricing.netOrganizerUsd,
       paymentRef: 'PM-9084877',
       state: 'payment_without_ticket',
       note: 'Pago Móvil recibido en cuenta · Pendiente emitir entrada al comprador',
@@ -798,23 +881,42 @@ export function getReconciliationSummary(): ReconciliationSummary {
   }
 
   const matchedRows = rows.filter((r) => r.state === 'matched');
+  const reconciledTicketsCount = matchedRows.reduce(
+    (sum, r) => sum + r.quantity,
+    0
+  );
+  const subtotalTicketsUsd = Number(
+    matchedRows.reduce((sum, r) => sum + r.subtotalTicketsUsd, 0).toFixed(2)
+  );
   const grossUsd = Number(
     matchedRows.reduce((sum, r) => sum + r.amountUsd, 0).toFixed(2)
   );
   const grossBs = Number(
     matchedRows.reduce((sum, r) => sum + r.amountBs, 0).toFixed(2)
   );
-  const veloztixFeeUsd = Number(
-    (grossUsd * (VELOZTIX_FEE_PCT / 100)).toFixed(2)
+  const veloztixPercentageFeeUsd = Number(
+    matchedRows.reduce((sum, r) => sum + r.percentageFeeUsd, 0).toFixed(2)
   );
-  const netOrganizerUsd = Number((grossUsd - veloztixFeeUsd).toFixed(2));
+  const veloztixFlatFeeUsd = Number(
+    (reconciledTicketsCount * FLAT_FEE_PER_TICKET_USD).toFixed(2)
+  );
+  const veloztixTotalCommissionUsd = Number(
+    (veloztixPercentageFeeUsd + veloztixFlatFeeUsd).toFixed(2)
+  );
+  const netOrganizerUsd = Number(
+    (grossUsd - veloztixTotalCommissionUsd).toFixed(2)
+  );
 
   const pendingCount = rows.filter((r) => r.state !== 'matched').length;
 
   return {
+    subtotalTicketsUsd,
     grossUsd,
     grossBs,
-    veloztixFeeUsd,
+    reconciledTicketsCount,
+    veloztixPercentageFeeUsd,
+    veloztixFlatFeeUsd,
+    veloztixTotalCommissionUsd,
     netOrganizerUsd,
     allMatched: pendingCount === 0,
     pendingCount,
@@ -824,16 +926,20 @@ export function getReconciliationSummary(): ReconciliationSummary {
 
 /**
  * Ejecuta el Cuadre de Pagos resolviendo órdenes con cobro confirmado
- * Intenta invocar POST /api/v1/settlements/reconcile en el backend
+ * Invoca POST /api/v1/settlements/reconcile en el backend real con fallback
  */
 export async function runCommercialReconciliation(): Promise<ReconciliationSummary> {
   try {
+    const reconcilePayload = {
+      merchant_id: 'MRC_UCAB_00129',
+      action: 'EXECUTE_COMMERCIAL_SETTLEMENT',
+      fee_model: '4.5% + $0.20/ticket',
+    };
+    const secureHeaders = await buildSecureRequestHeaders(reconcilePayload);
     await fetch(`${BACKEND_BASE_URL}/settlements/reconcile`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        merchant_id: 'MRC_UCAB_00129',
-      }),
+      headers: secureHeaders,
+      body: JSON.stringify(reconcilePayload),
     });
   } catch {
     // Si el backend está inactivo, opera fluidamente en memoria
@@ -846,6 +952,7 @@ export async function runCommercialReconciliation(): Promise<ReconciliationSumma
       'evt-cyberfest-26',
       2
     );
+    const healedPricing = calculateVelozTixPricing(8.0, 2);
     const healedOrder: TicketOrder = {
       id: 'VT-84877',
       eventId: 'evt-cyberfest-26',
@@ -856,10 +963,13 @@ export async function runCommercialReconciliation(): Promise<ReconciliationSumma
       posterTheme: 'violet',
       quantity: 2,
       unitPriceUsd: 8.0,
-      totalUsd: 16.0,
-      totalBs: 880.0,
-      commissionUsd: 0.72,
-      netOrganizerUsd: 15.28,
+      subtotalTicketsUsd: healedPricing.subtotalUsd,
+      percentageFeeUsd: healedPricing.percentageFeeUsd,
+      flatFeeUsd: healedPricing.flatFeeUsd,
+      totalCommissionUsd: healedPricing.totalCommissionUsd,
+      totalUsd: healedPricing.totalUsd,
+      totalBs: healedPricing.totalBs,
+      netOrganizerUsd: healedPricing.netOrganizerUsd,
       status: 'paid',
       createdAtIso: new Date().toISOString(),
       buyerName: 'Carlos Mendoza',
@@ -873,7 +983,7 @@ export async function runCommercialReconciliation(): Promise<ReconciliationSumma
         rif: 'J-50482910-3',
         phone: '0414-288-9010',
         conceptRef: 'VT-84877',
-        qrPayload: 'veloztix://pay/VT-84877?bs=880.00',
+        qrPayload: `PAGO_MOVIL|BANCO:0105|RIF:J504829103|TEL:04142889010|MONTO_BS:${healedPricing.totalBs.toFixed(2)}|MONTO_USD:${healedPricing.totalUsd.toFixed(2)}|REF:VT-84877`,
         expiresAtIso: new Date().toISOString(),
         ttlSeconds: 300,
       },

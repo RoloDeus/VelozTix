@@ -12,8 +12,13 @@ import {
   Ticket,
   Users,
 } from 'lucide-react';
-import { EventCategory, EventItem } from '../types/veloztix';
+import {
+  calculateVelozTixPricing,
+  EventCategory,
+  EventItem,
+} from '../types/veloztix';
 import { EventPosterArt } from '../components/EventPosterArt';
+import { sanitizeTextInput } from '../utils/security';
 
 interface CatalogViewProps {
   events: EventItem[];
@@ -54,8 +59,10 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
   // MODO DETALLE DEL EVENTO
   // ==========================================================================
   if (selectedEvent) {
-    const totalUsd = Number((ticketQty * selectedEvent.priceUsd).toFixed(2));
-    const totalBs = Number((ticketQty * selectedEvent.priceBs).toFixed(2));
+    const pricing = calculateVelozTixPricing(
+      selectedEvent.priceUsd,
+      ticketQty
+    );
 
     return (
       <div className="space-y-6">
@@ -223,21 +230,27 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
                     {ticketQty === 1 ? 'Entrada General' : 'Entradas Generales'}
                   </span>
                   <span className="font-medium text-zinc-200">
-                    ${totalUsd.toFixed(2)}
+                    ${pricing.subtotalUsd.toFixed(2)}
                   </span>
                 </div>
-                <div className="flex justify-between text-sm text-zinc-400">
-                  <span>Cargo por servicio al comprador</span>
-                  <span className="font-semibold text-emerald-400">Gratis</span>
+                <div className="flex justify-between gap-3 text-sm text-zinc-400">
+                  <span>Tarifa de servicio VelozTix: 4.5% + $0.20 por entrada</span>
+                  <span className="shrink-0 font-medium text-zinc-200">
+                    ${pricing.totalCommissionUsd.toFixed(2)}
+                  </span>
                 </div>
                 <div className="flex items-baseline justify-between border-t border-zinc-800 pt-3">
                   <span className="text-base font-bold text-white">Total a pagar</span>
                   <div className="text-right">
                     <span className="block text-xl font-extrabold text-emerald-400">
-                      Bs. {totalBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })}
+                      Bs.{' '}
+                      {pricing.totalBs.toLocaleString('es-VE', {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
                     </span>
                     <span className="text-xs text-zinc-400">
-                      Ref. ${totalUsd.toFixed(2)} USD
+                      Ref. ${pricing.totalUsd.toFixed(2)} USD
                     </span>
                   </div>
                 </div>
@@ -254,7 +267,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
               </button>
 
               <p className="mt-3 text-center text-xs text-zinc-500">
-                Pago Móvil rápido · Recibes tu código QR al instante
+                Tarifa de servicio VelozTix: 4.5% + $0.20 por entrada · Pago Móvil instantáneo
               </p>
             </div>
           </div>
@@ -337,7 +350,9 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
             <input
               type="text"
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) =>
+                setSearchQuery(sanitizeTextInput(e.target.value, 80))
+              }
               placeholder="Buscar evento o lugar..."
               className="w-full rounded-xl border border-zinc-800 bg-zinc-950/90 py-2 pl-10 pr-4 text-sm text-white placeholder-zinc-500 focus:border-violet-500 focus:outline-none"
             />
@@ -390,7 +405,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
                       ${event.priceUsd.toFixed(2)}
                     </span>
                     <span className="text-xs font-medium text-zinc-400">
-                      / Bs. {event.priceBs.toFixed(0)}
+                      / Bs. {event.priceBs.toFixed(2)}
                     </span>
                   </div>
                 </div>
