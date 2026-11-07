@@ -34,6 +34,11 @@ import {
   ReconciliationSummary,
 } from '../services/apiClient';
 import { EventPosterArt } from '../components/EventPosterArt';
+import {
+  SAFE_EXTERNAL_LINK_PROPS,
+  sanitizeOrganizerEventInput,
+  sanitizeTextInput,
+} from '../utils/security';
 
 interface OrganizerPortalViewProps {
   events: EventItem[];
@@ -98,8 +103,9 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
 
   const handleCreateEventSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newEventForm.title.trim() || !newEventForm.venue.trim()) return;
-    onCreateEvent(newEventForm);
+    const sanitized = sanitizeOrganizerEventInput(newEventForm);
+    if (!sanitized.title || !sanitized.venue) return;
+    onCreateEvent(sanitized);
     setNewEventForm({
       title: '',
       category: 'Música & Fiestas',
@@ -320,9 +326,17 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
                   <div className="mt-4 flex items-center justify-between gap-2 rounded-2xl border border-zinc-800 bg-zinc-950 px-3.5 py-2.5 text-xs">
                     <div className="flex min-w-0 items-center gap-2">
                       <Instagram className="h-4 w-4 shrink-0 text-pink-400" />
-                      <span className="truncate font-mono text-zinc-300">
+                      <a
+                        href={`https://${shareLink}`}
+                        {...SAFE_EXTERNAL_LINK_PROPS}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          onPreviewEventAsBuyer(ev);
+                        }}
+                        className="truncate font-mono text-zinc-300 hover:text-white"
+                      >
                         {shareLink}
-                      </span>
+                      </a>
                     </div>
                     <button
                       type="button"
@@ -884,7 +898,10 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
                   placeholder="Ej. Indie Acoustic Night UCAB"
                   value={newEventForm.title}
                   onChange={(e) =>
-                    setNewEventForm({ ...newEventForm, title: e.target.value })
+                    setNewEventForm({
+                      ...newEventForm,
+                      title: sanitizeTextInput(e.target.value, 90),
+                    })
                   }
                   className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-2.5 text-sm text-white focus:border-violet-500 focus:outline-none"
                 />
@@ -921,7 +938,10 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
                     placeholder="Ej. Terraza Las Mercedes"
                     value={newEventForm.venue}
                     onChange={(e) =>
-                      setNewEventForm({ ...newEventForm, venue: e.target.value })
+                      setNewEventForm({
+                        ...newEventForm,
+                        venue: sanitizeTextInput(e.target.value, 90),
+                      })
                     }
                     className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-2.5 text-sm text-white focus:border-violet-500 focus:outline-none"
                   />
@@ -941,7 +961,7 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
                     onChange={(e) =>
                       setNewEventForm({
                         ...newEventForm,
-                        dateLabel: e.target.value,
+                        dateLabel: sanitizeTextInput(e.target.value, 60),
                       })
                     }
                     className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-2.5 text-sm text-white focus:border-violet-500 focus:outline-none"
@@ -960,7 +980,7 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
                     onChange={(e) =>
                       setNewEventForm({
                         ...newEventForm,
-                        timeLabel: e.target.value,
+                        timeLabel: sanitizeTextInput(e.target.value, 50),
                       })
                     }
                     className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-2.5 text-sm text-white focus:border-violet-500 focus:outline-none"
@@ -1022,7 +1042,7 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
                   onChange={(e) =>
                     setNewEventForm({
                       ...newEventForm,
-                      description: e.target.value,
+                      description: sanitizeTextInput(e.target.value, 350),
                     })
                   }
                   className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-2.5 text-sm text-white focus:border-violet-500 focus:outline-none"

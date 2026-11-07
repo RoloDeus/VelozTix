@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ArrowLeft,
   Calendar,
@@ -15,6 +15,12 @@ import {
 } from '../types/veloztix';
 import { EventPosterArt } from '../components/EventPosterArt';
 import { maskCedula } from '../utils/privacyCrypto';
+import {
+  enforceZeroPersistentPiiStorage,
+  sanitizeDigitsInput,
+  sanitizeEmailInput,
+  sanitizeTextInput,
+} from '../utils/security';
 
 interface BuyerCheckoutViewProps {
   event: EventItem;
@@ -44,6 +50,13 @@ export const BuyerCheckoutView: React.FC<BuyerCheckoutViewProps> = ({
   errorMessage,
 }) => {
   const [validationError, setValidationError] = useState<string | null>(null);
+
+  useEffect(() => {
+    enforceZeroPersistentPiiStorage();
+    return () => {
+      enforceZeroPersistentPiiStorage();
+    };
+  }, []);
 
   const pricing = calculateVelozTixPricing(event.priceUsd, quantity);
 
@@ -131,13 +144,17 @@ export const BuyerCheckoutView: React.FC<BuyerCheckoutViewProps> = ({
                 <input
                   id="buyer-name"
                   type="text"
+                  autoComplete="off"
                   placeholder="Ej. Valentina Morales"
                   value={form.fullName}
                   onFocus={onFieldFocus}
                   onKeyDown={(e) => onFieldKeyDown(e.key)}
                   onPaste={onFieldPaste}
                   onChange={(e) =>
-                    onChangeForm({ ...form, fullName: e.target.value })
+                    onChangeForm({
+                      ...form,
+                      fullName: sanitizeTextInput(e.target.value, 80),
+                    })
                   }
                   className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-sm text-white placeholder-zinc-500 transition focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500"
                 />
@@ -171,6 +188,7 @@ export const BuyerCheckoutView: React.FC<BuyerCheckoutViewProps> = ({
                       id="buyer-cedula"
                       type="text"
                       inputMode="numeric"
+                      autoComplete="off"
                       placeholder="28445892"
                       value={form.cedulaDigits}
                       onFocus={onFieldFocus}
@@ -179,7 +197,7 @@ export const BuyerCheckoutView: React.FC<BuyerCheckoutViewProps> = ({
                       onChange={(e) =>
                         onChangeForm({
                           ...form,
-                          cedulaDigits: e.target.value.replace(/\D/g, '').slice(0, 9),
+                          cedulaDigits: sanitizeDigitsInput(e.target.value, 9),
                         })
                       }
                       className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-sm text-white placeholder-zinc-500 transition focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500"
@@ -216,6 +234,7 @@ export const BuyerCheckoutView: React.FC<BuyerCheckoutViewProps> = ({
                       id="buyer-phone"
                       type="text"
                       inputMode="numeric"
+                      autoComplete="off"
                       placeholder="5524821"
                       value={form.phoneDigits}
                       onFocus={onFieldFocus}
@@ -224,7 +243,7 @@ export const BuyerCheckoutView: React.FC<BuyerCheckoutViewProps> = ({
                       onChange={(e) =>
                         onChangeForm({
                           ...form,
-                          phoneDigits: e.target.value.replace(/\D/g, '').slice(0, 7),
+                          phoneDigits: sanitizeDigitsInput(e.target.value, 7),
                         })
                       }
                       className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-sm text-white placeholder-zinc-500 transition focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500"
@@ -244,13 +263,17 @@ export const BuyerCheckoutView: React.FC<BuyerCheckoutViewProps> = ({
                 <input
                   id="buyer-email"
                   type="email"
+                  autoComplete="off"
                   placeholder="valentina@correo.com"
                   value={form.email}
                   onFocus={onFieldFocus}
                   onKeyDown={(e) => onFieldKeyDown(e.key)}
                   onPaste={onFieldPaste}
                   onChange={(e) =>
-                    onChangeForm({ ...form, email: e.target.value })
+                    onChangeForm({
+                      ...form,
+                      email: sanitizeEmailInput(e.target.value, 100),
+                    })
                   }
                   className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-sm text-white placeholder-zinc-500 transition focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500"
                 />

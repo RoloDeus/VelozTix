@@ -18,6 +18,7 @@ import {
   EventItem,
 } from '../types/veloztix';
 import { EventPosterArt } from '../components/EventPosterArt';
+import { sanitizeTextInput } from '../utils/security';
 
 interface CatalogViewProps {
   events: EventItem[];
@@ -349,7 +350,9 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
             <input
               type="text"
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) =>
+                setSearchQuery(sanitizeTextInput(e.target.value, 80))
+              }
               placeholder="Buscar evento o lugar..."
               className="w-full rounded-xl border border-zinc-800 bg-zinc-950/90 py-2 pl-10 pr-4 text-sm text-white placeholder-zinc-500 focus:border-violet-500 focus:outline-none"
             />

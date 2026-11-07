@@ -1,42 +1,11 @@
 import { BuyerCheckoutForm } from '../types/veloztix';
-
-const PRIVACY_SALT =
-  import.meta.env.VITE_PRIVACY_SALT || 'vt_ucab_2026_salt';
-
-function fallbackHexHash(input: string): string {
-  let h1 = 0xdeadbeef ^ input.length;
-  let h2 = 0x41c6ce57 ^ input.length;
-  for (let i = 0; i < input.length; i++) {
-    const ch = input.charCodeAt(i);
-    h1 = Math.imul(h1 ^ ch, 2654435761);
-    h2 = Math.imul(h2 ^ ch, 1597334677);
-  }
-  h1 =
-    Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^
-    Math.imul(h2 ^ (h2 >>> 13), 3266489909);
-  h2 =
-    Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^
-    Math.imul(h1 ^ (h1 >>> 13), 3266489909);
-  const part =
-    (h1 >>> 0).toString(16).padStart(8, '0') +
-    (h2 >>> 0).toString(16).padStart(8, '0');
-  return (part + part + part + part).slice(0, 64);
-}
+import {
+  generatePseudonymizedCustomerHash,
+  sha256SubtleDigest,
+} from './security';
 
 export async function sha256Hex(message: string): Promise<string> {
-  try {
-    if (typeof window !== 'undefined' && window.crypto?.subtle) {
-      const encoder = new TextEncoder();
-      const data = encoder.encode(message);
-      const digest = await window.crypto.subtle.digest('SHA-256', data);
-      return Array.from(new Uint8Array(digest))
-        .map((b) => b.toString(16).padStart(2, '0'))
-        .join('');
-    }
-  } catch {
-    // Fallback
-  }
-  return fallbackHexHash(message);
+  return sha256SubtleDigest(message);
 }
 
 /**
@@ -92,16 +61,18 @@ export function maskEmail(email: string): string {
 }
 
 /**
- * Genera internamente (en segundo plano) el customer_hash irreversible
+ * Genera internamente el customer_hash irreversible mediante SHA-256 (window.crypto.subtle.digest)
+ * sobre la cédula y el teléfono antes de empaquetar telemetría o enviar la orden.
  */
 export async function generateCustomerHash(
   buyer: BuyerCheckoutForm
 ): Promise<string> {
-  const normalizedCedula = buyer.cedulaDigits.replace(/\D/g, '');
-  const normalizedPhone = buyer.phoneDigits.replace(/\D/g, '');
-  const normalizedEmail = buyer.email.trim().toLowerCase();
-  const canonical = `${PRIVACY_SALT}::${buyer.docPrefix}-${normalizedCedula}|${buyer.phonePrefix}-${normalizedPhone}|${normalizedEmail}`;
-  return sha256Hex(canonical);
+  return generatePseudonymizedCustomerHash(
+    buyer.docPrefix,
+    buyer.cedulaDigits,
+    buyer.phonePrefix,
+    buyer.phoneDigits
+  );
 }
 
 export async function generateDeviceFingerprint(): Promise<string> {
