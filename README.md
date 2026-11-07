@@ -36,6 +36,7 @@ Incluye 4 pestañas comerciales sincronizadas en vivo con las compras realizadas
 
 ## Instalación y Ejecución
 
+### Front-End (Vite + React)
 ```bash
 # Instalar dependencias
 npm install
@@ -45,4 +46,25 @@ npm run dev
 
 # Compilar para producción
 npm run build
+```
+
+### Backend Merchant Service (`/backend` en http://localhost:8000)
+El backend implementa el contrato **OpenAPI 3.0** (`openapi.yaml`) y el mapeo **ISO 8583**:
+- **Base de Datos:** SQLite portátil de cero dependencias externas (`node:sqlite`).
+- **Simulador de Redis en memoria:** Control atómico de stock, TTL de reservas (`300s`) y llaves de idempotencia (`24h`).
+- **Seguridad y Privacidad:** Bóveda PII cifrada con `AES-256-GCM`, seudonimización con `customer_hash` (`SHA-256` con sal) y pases QR firmados con `HMAC-SHA256` sin datos personales.
+- **Validación de Webhooks:** Verificación estricta de firma `X-Signature` HMAC-SHA256 sobre `req.rawBody` intacto.
+
+```bash
+# Compilar TypeScript del backend
+npm run backend:build
+
+# Inicializar y poblar la base de datos (Seed)
+npm run backend:seed
+
+# Ejecutar suite de pruebas automatizadas
+npm run backend:test
+
+# Iniciar el servidor backend en modo desarrollo
+npm run backend:dev
 ```
