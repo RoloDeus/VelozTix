@@ -9,7 +9,9 @@
     "start": "node dist/server.js",
     "dev": "tsx watch src/server.ts",
     "seed": "tsx src/db/seed.ts",
-    "test": "tsx --test tests/backend.spec.ts"
+    "test": "tsx --test tests/backend.spec.ts tests/certification.test.ts",
+    "test:cert": "tsx --test tests/certification.test.ts",
+    "benchmark": "tsx scripts/kpi_benchmark.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",

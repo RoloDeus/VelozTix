@@ -1,0 +1,29 @@
+{
+  "benchmark_metadata": {
+    "total_transactions": 200,
+    "legitimate_attempts": 170,
+    "bot_attempts_blocked": 30,
+    "settled_orders": 155,
+    "reversed_orders": 15,
+    "total_duration_ms": 871.52,
+    "total_duration_seconds": 0.87,
+    "executed_at": "2026-11-07T04:04:05.768Z"
+  },
+  "kpis": {
+    "approval_rate_legitimate_pct": 91.18,
+    "approval_rate_overall_pct": 77.5,
+    "sustained_throughput_tps": 229.48,
+    "transactional_auth_latency_avg_ms": 412.01,
+    "transactional_auth_latency_p95_ms": 592.16,
+    "transactional_e2e_latency_avg_ms": 571.48,
+    "transactional_e2e_latency_p50_ms": 575.68,
+    "transactional_e2e_latency_p90_ms": 691.1,
+    "transactional_e2e_latency_p95_ms": 848.45,
+    "transactional_e2e_latency_p99_ms": 848.58,
+    "transactional_e2e_latency_max_ms": 849.45,
+    "ai_inference_latency_avg_ms": 3.55,
+    "ai_inference_latency_p95_ms": 18,
+    "ai_latency_sla_under_80ms": true,
+    "reversal_rate_pct": 7.5
+  }
+}

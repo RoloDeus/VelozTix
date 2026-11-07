@@ -15,6 +15,7 @@ export function createDatabaseConnection(dbPath: string = ':memory:'): DatabaseS
 
   const db = new DatabaseSync(dbPath);
   db.exec('PRAGMA foreign_keys = ON;');
+  db.exec('PRAGMA busy_timeout = 5000;');
 
   if (dbPath !== ':memory:') {
     try {
