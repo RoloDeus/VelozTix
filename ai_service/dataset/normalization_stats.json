@@ -1,0 +1,105 @@
+{
+  "dataset_name": "VelozTix Synthetic Web Behavior & Anti-Scalping Telemetry Dataset",
+  "version": "1.0.0",
+  "seed": 20261107,
+  "total_samples": 2500,
+  "class_distribution": {
+    "legitimate_human_total": 1750,
+    "fraud_or_bot_total": 750,
+    "by_archetype": {
+      "FAN_DECIDIDO": 1150,
+      "COMPRADOR_INDECISO": 600,
+      "BOT_AUTOFILL": 400,
+      "SCALPER_MASIVO": 350
+    }
+  },
+  "anonymization_scheme": {
+    "customer_hash": "SHA-256(PRIVACY_SALT + national_id) prefixed with chash_",
+    "device_fingerprint": "SHA-256(PRIVACY_SALT + browser_canvas_ua) prefixed with dfp_",
+    "regulatory_alignment": [
+      "SUDEBAN 12441",
+      "SUDEBAN 12221",
+      "Privacy by Design"
+    ]
+  },
+  "feature_statistics": {
+    "dwell_time": {
+      "min": 80.0,
+      "max": 98045.0,
+      "mean": 24447.9688,
+      "std": 20853.880759
+    },
+    "scroll_depth": {
+      "min": 0.0,
+      "max": 100.0,
+      "mean": 61.328668,
+      "std": 34.248084
+    },
+    "pointer_velocity_px_s": {
+      "min": 95.0,
+      "max": 5108.1,
+      "mean": 1131.333868,
+      "std": 1193.239525
+    },
+    "checkout_fill_time_ms": {
+      "min": 45.0,
+      "max": 38000.0,
+      "mean": 8708.0404,
+      "std": 7351.027959
+    },
+    "avg_flight_time_ms": {
+      "min": 1.0,
+      "max": 322.44,
+      "mean": 107.466816,
+      "std": 70.574296
+    },
+    "cursor_linearity_index": {
+      "min": 0.08,
+      "max": 0.999,
+      "mean": 0.478773,
+      "std": 0.300928
+    },
+    "copy_paste_flag": {
+      "min": 0.0,
+      "max": 1.0,
+      "mean": 0.3708,
+      "std": 0.483019
+    },
+    "backspace_corrections": {
+      "min": 0.0,
+      "max": 11.0,
+      "mean": 2.018,
+      "std": 3.074553
+    },
+    "tab_switch_count": {
+      "min": 0.0,
+      "max": 9.0,
+      "mean": 2.2592,
+      "std": 2.585346
+    },
+    "session_inactivity_ms": {
+      "min": 0.0,
+      "max": 28665.0,
+      "mean": 3661.456,
+      "std": 5520.574447
+    },
+    "failed_order_retries": {
+      "min": 0.0,
+      "max": 8.0,
+      "mean": 1.3748,
+      "std": 2.157203
+    },
+    "ip_requests_5m": {
+      "min": 1.0,
+      "max": 75.0,
+      "mean": 12.9652,
+      "std": 19.656836
+    },
+    "ticket_quantity": {
+      "min": 1.0,
+      "max": 10.0,
+      "mean": 3.3516,
+      "std": 2.817371
+    }
+  }
+}

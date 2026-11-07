@@ -1,0 +1,39 @@
+{
+  "model_name": "VelozTix Hybrid Anti-Bot & Anti-Scalping Baseline (RandomForest + IsolationForest)",
+  "dataset_total_samples": 2500,
+  "train_samples": 2000,
+  "test_samples": 500,
+  "training_duration_ms": 1230.63,
+  "inference_latency_avg_ms": 0.0354,
+  "inference_latency_p95_ms": 0.043,
+  "meets_sla_under_80ms": true,
+  "metrics": {
+    "total_evaluated": 500,
+    "accuracy": 0.998,
+    "precision": 1.0,
+    "recall": 0.9939,
+    "f1_score": 0.9969,
+    "roc_auc": 1.0,
+    "confusion_matrix": {
+      "true_negatives_human_approved": 336,
+      "false_positives_human_blocked": 0,
+      "false_negatives_bot_missed": 1,
+      "true_positives_bot_or_scalper_blocked": 163
+    }
+  },
+  "feature_importances_gini": {
+    "dwell_time": 0.0345,
+    "scroll_depth": 0.0772,
+    "pointer_velocity_px_s": 0.0066,
+    "checkout_fill_time_ms": 0.037,
+    "avg_flight_time_ms": 0.0371,
+    "cursor_linearity_index": 0.1421,
+    "copy_paste_flag": 0.0,
+    "backspace_corrections": 0.0,
+    "tab_switch_count": 0.0062,
+    "session_inactivity_ms": 0.2157,
+    "failed_order_retries": 0.0192,
+    "ip_requests_5m": 0.4092,
+    "ticket_quantity": 0.015
+  }
+}

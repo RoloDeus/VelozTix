@@ -150,6 +150,35 @@ El script `backend/scripts/kpi_benchmark.ts` somete el servidor HTTP Express y l
 
 ---
 
+## 6.1. Motor Comercializable de IA (FastAPI), Algoritmo Baseline y Dataset Sintético
+
+En cumplimiento de la **Sección 5 y 6.7 del Documento de Concepto** y la **Sección 6 de la Rúbrica (Baseline de IA y Dataset Sintético Estructurado)**, el directorio `ai_service/` implementa el ecosistema completo en **Python + FastAPI**:
+
+### 1. Algoritmo Baseline Funcional (`ai_service/train_baseline.py` y `ai_service/app.py`)
+* **Modelo Híbrido Entrenado:** Combina un **Random Forest Classifier** (25 árboles CART con criterio de impureza Gini) para clasificación supervisada y un **Isolation Forest** (25 árboles de aislamiento aleatorio) para detección no supervisada de anomalías, compras masivas y ráfagas de *scalping*.
+* **Desempeño en Validación (Test Set = 500 sesiones):**
+  * **Accuracy:** `99.80 %` · **Precision:** `100.00 %` · **Recall:** `99.39 %` · **F1-Score:** `99.69 %` · **ROC-AUC:** `1.0000`
+  * **Latencia de Inferencia p95:** `0.0645 ms` (cumple holgadamente el SLA estricto `< 80 ms`).
+* **Integración en Tiempo Real:** El artefacto entrenado (`ai_service/models/baseline_rf_iforest_model.json`) es consumido tanto por el microservicio **FastAPI** (`ai_service/app.py` en puerto `8001`) como directamente en memoria por `BehaviorAiService` (`backend/src/services/ai-scoring.service.ts`).
+
+### 2. Dataset Sintético Estructurado (`ai_service/dataset/`)
+* **Volumen de Muestras:** **2,500 sesiones sintéticas** distribuidas en los 4 arquetipos del negocio (`FAN_DECIDIDO`: 1,150, `COMPRADOR_INDECISO`: 600, `BOT_AUTOFILL`: 400, `SCALPER_MASIVO`: 350).
+* **Telemetría Anonimizada y Normalizada:** Incluye hashes con sal (`customer_hash`, `device_fingerprint`) y las 13 variables conductuales normalizadas mediante **Min-Max ($[0,1]$)** y **Z-Score ($\mu=0, \sigma=1$)** en `synthetic_telemetry_normalized.csv`.
+* **Diccionario de Variables:** Documentado exhaustivamente en `ai_service/dataset/DICCIONARIO_VARIABLES.md`.
+
+```bash
+# Regenerar el dataset sintético estructurado (2,500 muestras raw + normalizadas)
+npm run ai:dataset
+
+# Entrenar y evaluar el modelo Baseline (Random Forest + Isolation Forest)
+npm run ai:train
+
+# Levantar el microservicio de IA (FastAPI en http://127.0.0.1:8001)
+npm run ai:serve
+```
+
+---
+
 ## 7. Instrucciones de Instalación y Ejecución
 
 ### Prerrequisitos

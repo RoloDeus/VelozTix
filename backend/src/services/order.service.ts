@@ -147,7 +147,9 @@ export class OrderService {
 
     // 4. AI Telemetry Evaluation (< 80 ms)
     const sessionId = `ses_${crypto.randomUUID()}`;
-    const aiEval = await this.aiEngine.evaluate(dto.telemetry);
+    const aiEval = await this.aiEngine.evaluate(dto.telemetry, {
+      ticketQuantity: totalQty,
+    });
 
     this.telemetryRepo.insert({
       session_id: sessionId,
