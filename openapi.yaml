@@ -1,0 +1,654 @@
+openapi: 3.0.3
+info:
+  title: VelozTix Core - Backend Merchant & Ticketing Mediator API
+  version: 1.0.0
+  description: |
+    Contrato OpenAPI 3.0 para **VelozTix**, plataforma mediadora de boletería con orden de pago por QR dinámico (Pago Móvil) y Motor Comercializable de IA para Detección de Fraude y Analítica de Comportamiento en Tiempo Real (< 80 ms).
+    
+    ### Lineamientos de Arquitectura y Cumplimiento:
+    * **Rol Estricto de Mediador Comercial:** VelozTix no capta fondos ni procesa credenciales bancarias o claves C2P. Toda validación financiera es delegada a la pasarela/suiche externo (Caja Negra) mediante mensajería mapeada a **ISO 8583**.
+    * **Privacy by Design (PCI-DSS 4.0 Delegador & SUDEBAN 12441 / 12221):** Los datos identificatorios del comprador (PII) viajan bajo TLS 1.3, se cifran en reposo con AES-256 en la bóveda y se seudonimizan mediante `customer_hash` (SHA-256 con sal) antes de ser evaluados por el microservicio de IA.
+    * **Idempotencia Transaccional:** Soporte nativo de `Idempotency-Key` en creación de órdenes y recepción de webhooks para evitar cobros duplicados, doble bloqueo de stock o múltiples emisiones de boletos.
+  contact:
+    name: Equipo A - Desarrollo de Software Fintech (UCAB)
+    email: arquitectura@veloztix.io
+
+servers:
+  - url: https://api.veloztix.io
+    description: Servidor Cloud Serverless Principal (Producción / Sandbox TLS 1.3)
+  - url: http://localhost:8000
+    description: Entorno de Desarrollo Local (FastAPI Mock / Simulación)
+
+tags:
+  - name: Orders
+    description: Orquestación del ciclo de vida de la orden de entrada (Autorización, QR Dinámico y Consulta de Estatus).
+  - name: Webhooks
+    description: Recepción asíncrona de confirmaciones de cobro Pago Móvil desde la Pasarela/Suiche Externo (Captura).
+
+paths:
+  /api/v1/orders/authorize:
+    post:
+      tags:
+        - Orders
+      summary: Autorizar orden de entrada, evaluar telemetría en IA (< 80 ms) y ensamblar QR dinámico
+      description: |
+        Recibe los datos del comprador junto con el vector de telemetría web capturado en el Front-end.
+        1. Cifra el PII en bóveda (AES-256) y genera el `customer_hash` irreversible (SHA-256 + sal).
+        2. Evalúa el comportamiento en el Motor de IA (< 80 ms) sin exponer PII.
+        3. Si el veredicto es `APPROVE`, bloquea temporalmente el stock en memoria (TTL), solicita autorización al suiche externo (**ISO 8583 MTI 0100 / 0110**) y ensambla el QR dinámico de Pago Móvil firmado criptográficamente.
+      operationId: authorizeOrder
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderAuthorizationRequest'
+      responses:
+        '201':
+          description: Orden autorizada exitosamente. Stock reservado temporalmente y QR dinámico de Pago Móvil generado.
+          headers:
+            Idempotency-Key:
+              schema:
+                type: string
+                format: uuid
+              description: Eco de la llave de idempotencia procesada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderAuthorizationResponse'
+        '400':
+          description: Error de validación en los parámetros de la orden o telemetría incompleta.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Orden rechazada en tiempo real por el Motor de IA Antifraude (`REJECT_BOT` - Detección de Scalping, Bot o Anomalía de Sesión). No se compromete el inventario.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FraudRejectionResponse'
+        '409':
+          description: Conflicto de idempotencia o stock agotado para el evento solicitado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/orders/{order_id}/status:
+    get:
+      tags:
+        - Orders
+      summary: Consultar el estatus actual de una orden y obtener el boleto QR tras la captura
+      description: |
+        Permite al Front-end (Checkout UI) realizar polling o verificar el estado de la orden en tiempo real.
+        Cuando la orden pasa a estado `CAPTURED` / `SETTLED` tras el webhook de Pago Móvil, este endpoint retorna el payload del **Pase QR Criptográfico** (`ticket_qr` firmado con HMAC/JWT sin PII expuesto).
+      operationId: getOrderStatus
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      parameters:
+        - name: order_id
+          in: path
+          required: true
+          description: Identificador único de la orden en VelozTix.
+          schema:
+            type: string
+            example: "ord_vz_98234710"
+      responses:
+        '200':
+          description: Estatus actual de la orden recuperado exitosamente.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderStatusResponse'
+        '404':
+          description: Orden no encontrada en el registro transaccional.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/webhooks/pago-movil:
+    post:
+      tags:
+        - Webhooks
+      summary: Webhook de confirmación y captura de Pago Móvil desde la Pasarela/Agregador Externo
+      description: |
+        Endpoint receptor de notificaciones asíncronas enviadas por la Pasarela/Suiche de Pago Móvil cuando el comprador ejecuta el pago desde su aplicación bancaria (o cuando ocurre un rechazo externo).
+        * Valida autenticidad mediante firma criptográfica `HMAC-SHA256(payload, secret)` en el header `X-Signature`.
+        * Verifica idempotencia mediante `Idempotency-Key` (`X-Idempotency-Key`) y `payment_reference` (`DE37` RRN) para descartar reintentos duplicados.
+        * Si la orden está vigente (`HOLD` / `PENDING_PAYMENT`) y el monto en Bs coincide, asienta la transacción (`SETTLED` / `CAPTURED`), guarda la traza inmutable (SUDEBAN 12441/12221) y emite el boleto digital firmado (`HMAC/JWT`).
+      operationId: handlePagoMovilWebhook
+      security:
+        - WebhookSignatureAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyHeader'
+        - $ref: '#/components/parameters/XIdempotencyKeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PagoMovilWebhookPayload'
+      responses:
+        '200':
+          description: |
+            Confirmación de recepción del webhook (ACK). Cubre tres escenarios de negocio:
+            1. `captured`: Captura exitosa y boleto QR emitido.
+            2. `already_processed`: Reintento de webhook detectado por `Idempotency-Key` (respuesta idempotente sin reprocesar).
+            3. `anomaly_logged`: Orden expirada (TTL vencido) o monto discrepante; se acusa recibo (200 OK) con alerta interna para conciliación comercial y eventual reverso/reembolso.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookAckResponse'
+        '401':
+          description: Firma criptográfica `X-Signature` inválida o no autorizada. Petición descartada por seguridad.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Token JWT de sesión para clientes del Checkout Web o administradores en el Merchant Portal.
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-VelozTix-API-Key
+      description: Llave de API para integraciones B2B del comercio o consumo SaaS del motor de comportamiento.
+    WebhookSignatureAuth:
+      type: apiKey
+      in: header
+      name: X-Signature
+      description: Firma criptográfica `HMAC-SHA256(raw_body, webhook_secret)` enviada por la Pasarela/Agregador de Pago Móvil para garantizar integridad y autenticidad del origen.
+
+  parameters:
+    IdempotencyKeyHeader:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Llave única de idempotencia (UUID v4) para evitar el procesamiento duplicado de órdenes o eventos de webhook ante reintentos de red.
+      schema:
+        type: string
+        format: uuid
+        example: "550e8400-e29b-41d4-a716-446655440000"
+    XIdempotencyKeyHeader:
+      name: X-Idempotency-Key
+      in: header
+      required: false
+      description: Alias de soporte para pasarelas externas que envían la llave de idempotencia bajo el prefijo `X-Idempotency-Key`.
+      schema:
+        type: string
+        format: uuid
+        example: "550e8400-e29b-41d4-a716-446655440000"
+
+  schemas:
+    OrderAuthorizationRequest:
+      type: object
+      required:
+        - event_id
+        - items
+        - buyer_pii
+        - telemetry
+      properties:
+        event_id:
+          type: string
+          description: Identificador único del evento publicado por el organizador.
+          example: "evt_ucab_fest_2026"
+        items:
+          type: array
+          description: Desglose de entradas solicitadas en la orden (máximo controlado por ratio anti-scalping).
+          minItems: 1
+          items:
+            type: object
+            required:
+              - ticket_tier_id
+              - quantity
+              - unit_price_bs
+            properties:
+              ticket_tier_id:
+                type: string
+                example: "tier_general_preventa"
+              quantity:
+                type: integer
+                minimum: 1
+                maximum: 10
+                example: 2
+              unit_price_bs:
+                type: number
+                format: double
+                description: Precio unitario expresado en Bolívares (VES).
+                example: 450.00
+        buyer_pii:
+          type: object
+          description: |
+            Datos identificatorios del comprador. Se reciben por TLS 1.3, se cifran en reposo con AES-256 en la bóveda y se transforman en `customer_hash` (SHA-256 + sal) antes de invocar al motor de IA.
+          required:
+            - national_id
+            - phone_number
+            - email
+          properties:
+            national_id:
+              type: string
+              description: Documento de identidad (Cédula), enmascarado en interfaces tras su ingreso.
+              example: "V-28123456"
+            phone_number:
+              type: string
+              description: Teléfono de contacto del asistente (no se almacena como credencial financiera).
+              example: "+584121234567"
+            email:
+              type: string
+              format: email
+              description: Correo electrónico para recepción del comprobante y pase QR.
+              example: "asistente@correo.com"
+        telemetry:
+          $ref: '#/components/schemas/WebBehaviorTelemetry'
+
+    WebBehaviorTelemetry:
+      type: object
+      description: Vector anonimizado de micro-comportamientos capturados en la página para evaluación antifraude en < 80 ms y analítica comercializable B2B.
+      required:
+        - dwell_time
+        - scroll_depth
+        - checkout_fill_time_ms
+        - keystroke_dynamics
+        - copy_paste_flag
+        - tab_switch_count
+        - device_fingerprint
+      properties:
+        dwell_time:
+          type: integer
+          description: Tiempo de permanencia total en la página del evento (en milisegundos).
+          example: 42500
+        scroll_depth:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 100
+          description: Porcentaje de profundidad de scroll alcanzado en la página (0 a 100%).
+          example: 85.5
+        checkout_fill_time_ms:
+          type: integer
+          description: Tiempo empleado en completar el formulario de orden en milisegundos (detecta llenado instantáneo por bots).
+          example: 11200
+        keystroke_dynamics:
+          type: object
+          description: Métricas estadísticas de cadencia de tecleo y linealidad del puntero/touch.
+          properties:
+            avg_flight_time_ms:
+              type: number
+              format: float
+              example: 118.4
+            cursor_linearity_index:
+              type: number
+              format: float
+              description: Índice de linealidad del trazo (valores cercanos a 1.00 indican scripts automatizados).
+              example: 0.34
+        copy_paste_flag:
+          type: boolean
+          description: Indica si el usuario utilizó pegado automático en los campos del formulario.
+          example: false
+        tab_switch_count:
+          type: integer
+          description: Número de cambios de pestaña o pérdidas de foco durante la sesión.
+          example: 1
+        device_fingerprint:
+          type: string
+          description: Huella anonimizada del navegador/dispositivo para control de ráfagas por IP/dispositivo en ventanas de 5 min.
+          example: "fp_sha256_9f86d081884c7d659a2feaa0c55ad015"
+
+    OrderAuthorizationResponse:
+      type: object
+      required:
+        - order_id
+        - status
+        - amount_bs
+        - customer_hash
+        - ai_evaluation
+        - iso8583_trace
+        - qr_dynamic_payload
+        - expires_at
+      properties:
+        order_id:
+          type: string
+          description: Identificador único de la orden creada y reservada en memoria.
+          example: "ord_vz_98234710"
+        status:
+          type: string
+          enum:
+            - AUTHORIZED
+            - PENDING_PAYMENT
+          example: "AUTHORIZED"
+        amount_bs:
+          type: number
+          format: double
+          description: Monto total exacto bloqueado en la orden en Bolívares (VES).
+          example: 900.00
+        customer_hash:
+          type: string
+          description: Identificador seudonimizado irreversible (SHA-256 + sal) para trazabilidad sin exponer PII.
+          example: "chash_e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        ai_evaluation:
+          type: object
+          description: Resultado de la inferencia ejecutada por el Motor de IA Antifraude (< 80 ms).
+          properties:
+            verdict:
+              type: string
+              enum:
+                - APPROVE
+              example: "APPROVE"
+            risk_score:
+              type: number
+              format: float
+              minimum: 0.0
+              maximum: 1.0
+              example: 0.08
+            profile_tag:
+              type: string
+              enum:
+                - FAN_DECIDIDO
+                - COMPRADOR_INDECISO
+                - RIESGO_MODERADO
+              example: "FAN_DECIDIDO"
+            inference_latency_ms:
+              type: integer
+              example: 42
+        iso8583_trace:
+          $ref: '#/components/schemas/Iso8583AuthorizationTrace'
+        qr_dynamic_payload:
+          $ref: '#/components/schemas/DynamicQrPayload'
+        expires_at:
+          type: string
+          format: date-time
+          description: Marca de tiempo (UTC) en la que vence el TTL del QR dinámico y se libera la reserva en memoria.
+          example: "2026-11-08T23:15:00Z"
+
+    Iso8583AuthorizationTrace:
+      type: object
+      description: Mapeo de campos financieros ISO 8583 intercambiados con la Pasarela/Suiche Externo durante la autorización de la orden.
+      properties:
+        mti_request:
+          type: string
+          example: "0100"
+        mti_response:
+          type: string
+          example: "0110"
+        de3_processing_code:
+          type: string
+          description: Código de procesamiento para orden de cobro Pago Móvil.
+          example: "000000"
+        de4_transaction_amount:
+          type: string
+          description: Monto expresado en formato ISO 8583 (12 dígitos sin decimales, en céntimos).
+          example: "000000090000"
+        de11_stan:
+          type: string
+          description: Systems Trace Audit Number (número único de auditoría de sistema).
+          example: "482910"
+        de37_rrn:
+          type: string
+          description: Retrieval Reference Number asignado para el cruce posterior en Captura y Conciliación.
+          example: "631200482910"
+        de38_auth_code:
+          type: string
+          description: Código de autorización retornado por el suiche externo.
+          example: "A94F21"
+        de39_response_code:
+          type: string
+          description: Código de respuesta ISO 8583 ('00' = Orden Aprobada).
+          example: "00"
+        de42_merchant_id:
+          type: string
+          description: Identificador del comercio organizador afiliado.
+          example: "MRC_UCAB_00129"
+
+    DynamicQrPayload:
+      type: object
+      description: Estructura del QR Dinámico de Pago Móvil ensamblado y firmado criptográficamente por VelozTix Core.
+      required:
+        - qr_string_token
+        - destination_bank_code
+        - merchant_phone_masked
+        - merchant_tax_id
+        - exact_amount_bs
+        - de37_rrn
+        - ttl_seconds
+        - hmac_signature
+      properties:
+        qr_string_token:
+          type: string
+          description: Payload codificado listo para renderizar en código QR escaneable por aplicaciones bancarias de Pago Móvil.
+          example: "VELOZTIX://PM?bnk=0102&rif=J501234567&amt=900.00&rrn=631200482910&exp=1794179700&sig=8f92a1c4"
+        destination_bank_code:
+          type: string
+          description: Código SUDEBAN de 4 dígitos del banco receptor del comercio organizador.
+          example: "0102"
+        merchant_phone_masked:
+          type: string
+          description: Teléfono afiliado al comercio receptor para el cobro Pago Móvil.
+          example: "0414-***4589"
+        merchant_tax_id:
+          type: string
+          description: RIF del comercio organizador destinatario de los fondos.
+          example: "J-501234567"
+        exact_amount_bs:
+          type: number
+          format: double
+          example: 900.00
+        de37_rrn:
+          type: string
+          description: Referencia de orden vinculada a la autorización ISO 8583.
+          example: "631200482910"
+        ttl_seconds:
+          type: integer
+          description: Tiempo de vida útil del QR dinámico controlado en memoria caché (Redis).
+          example: 300
+        hmac_signature:
+          type: string
+          description: Firma criptográfica HMAC-SHA256 generada por VelozTix que garantiza que el monto y comercio del QR no fueron alterados.
+          example: "8f92a1c4b7d6e5f3a291048576c2b1a09f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c"
+
+    FraudRejectionResponse:
+      type: object
+      required:
+        - status
+        - verdict
+        - risk_score
+        - message
+        - audit_trace_id
+      properties:
+        status:
+          type: integer
+          example: 403
+        verdict:
+          type: string
+          enum:
+            - REJECT_BOT
+          example: "REJECT_BOT"
+        risk_score:
+          type: number
+          format: float
+          example: 0.96
+        message:
+          type: string
+          example: "Orden rechazada por políticas de seguridad: se detectó patrón de automatización o acaparamiento de entradas (scalping)."
+        audit_trace_id:
+          type: string
+          description: Identificador de la traza de auditoría registrada según normativas SUDEBAN 12441 y 12221.
+          example: "aud_rej_7741290"
+
+    OrderStatusResponse:
+      type: object
+      required:
+        - order_id
+        - status
+        - amount_bs
+        - updated_at
+      properties:
+        order_id:
+          type: string
+          example: "ord_vz_98234710"
+        status:
+          type: string
+          description: |
+            Estado actual dentro del ciclo de vida transaccional de VelozTix:
+            * `AUTHORIZED` / `PENDING_PAYMENT`: Reserva activa esperando confirmación del webhook de Pago Móvil.
+            * `CAPTURED` / `SETTLED`: Pago confirmado por la pasarela externa y boleto digital emitido.
+            * `REVERSED`: Orden anulada por expiración del TTL en caché o rechazo notificado por el proveedor externo (stock restituido).
+            * `RECONCILED`: Orden cuadrada exitosamente en el corte de conciliación comercial.
+          enum:
+            - AUTHORIZED
+            - PENDING_PAYMENT
+            - CAPTURED
+            - SETTLED
+            - REVERSED
+            - RECONCILED
+          example: "SETTLED"
+        amount_bs:
+          type: number
+          format: double
+          example: 900.00
+        payment_reference:
+          type: string
+          nullable: true
+          description: Número de referencia bancaria de Pago Móvil confirmado en la captura (nulo mientras está pendiente).
+          example: "0094827162"
+        ticket_qr:
+          type: string
+          nullable: true
+          description: |
+            Token firmado criptográficamente (HMAC/JWT) que representa el Pase QR de la entrada digital.
+            Contiene únicamente `(ticket_id, event_id, nonce)` sin exponer ningún dato personal (PII) del comprador al escanearse en puerta.
+            Solo se entrega cuando `status` es `CAPTURED` o `SETTLED`.
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0aWNrZXRfaWQiOiJ0a2RfOTgyMzEiLCJldmVudF9pZCI6ImV2dF91Y2FiX2Zlc3RfMjAyNiIsIm5vbmNlIjoiN2Y4YTliM2MifQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+        updated_at:
+          type: string
+          format: date-time
+          example: "2026-11-08T23:12:14Z"
+
+    PagoMovilWebhookPayload:
+      type: object
+      description: Payload enviado por la Pasarela / Agregador de Pago Móvil al confirmar o rechazar una transacción.
+      required:
+        - event_type
+        - order_id
+        - payment_reference
+        - amount_bs
+        - iso8583_settlement
+        - timestamp
+      properties:
+        event_type:
+          type: string
+          enum:
+            - payment.captured
+            - payment.failed
+          description: Tipo de evento notificado por el proveedor externo.
+          example: "payment.captured"
+        order_id:
+          type: string
+          description: Identificador de la orden en VelozTix asociada al cobro.
+          example: "ord_vz_98234710"
+        payment_reference:
+          type: string
+          description: Referencia bancaria interbancaria del Pago Móvil ejecutado por el comprador.
+          example: "0094827162"
+        amount_bs:
+          type: number
+          format: double
+          description: Monto exacto liquidado en Bolívares reportado por la pasarela externa.
+          example: 900.00
+        rejection_reason:
+          type: string
+          nullable: true
+          description: Motivo del fallo en caso de que `event_type` sea `payment.failed` (dispara flujo de Reverso).
+          example: null
+        iso8583_settlement:
+          type: object
+          description: Datos de mensajería financiera ISO 8583 correspondientes a la captura/confirmación del cobro.
+          required:
+            - mti
+            - de37_rrn
+            - de39_response_code
+          properties:
+            mti:
+              type: string
+              description: Message Type Indicator ('0200'/'0210' para captura financiera o '0400' para reverso).
+              example: "0210"
+            de11_stan:
+              type: string
+              example: "482910"
+            de37_rrn:
+              type: string
+              example: "631200482910"
+            de38_auth_code:
+              type: string
+              example: "A94F21"
+            de39_response_code:
+              type: string
+              description: "'00' = Cobro exitoso; distinto de '00' = Rechazo bancario."
+              example: "00"
+        timestamp:
+          type: string
+          format: date-time
+          example: "2026-11-08T23:12:10Z"
+
+    WebhookAckResponse:
+      type: object
+      required:
+        - status
+        - order_id
+        - audit_trace_id
+      properties:
+        status:
+          type: string
+          enum:
+            - captured
+            - already_processed
+            - reversed
+            - acknowledge_with_internal_alert
+          description: |
+            Resultado del procesamiento del webhook (alineado al diagrama de secuencia de Captura):
+            * `captured`: Orden asentada como `SETTLED` y boleto QR emitido.
+            * `already_processed`: Evento previamente procesado (idempotencia activa).
+            * `reversed`: Orden pasada a `REVERSED` por notificación de fallo externo.
+            * `acknowledge_with_internal_alert`: Orden expirada (TTL vencido) o monto discrepante; marcada para conciliación manual/automática.
+          example: "captured"
+        order_id:
+          type: string
+          example: "ord_vz_98234710"
+        ticket_id:
+          type: string
+          nullable: true
+          description: Identificador del boleto digital emitido (presente cuando `status` es `captured`).
+          example: "tkt_vz_551209"
+        audit_trace_id:
+          type: string
+          description: Identificador de la traza inmutable insertada en el Ledger de Auditoría (SUDEBAN 12441 / 12221).
+          example: "aud_cap_9981234"
+
+    ErrorResponse:
+      type: object
+      required:
+        - error_code
+        - message
+      properties:
+        error_code:
+          type: string
+          example: "INVALID_SIGNATURE"
+        message:
+          type: string
+          example: "La firma criptográfica HMAC-SHA256 del webhook no es válida o no coincide con el payload."
+        details:
+          type: string
+          nullable: true
+          example: "Header X-Signature ausente o corrupto."
