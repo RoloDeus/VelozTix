@@ -18,7 +18,7 @@ import {
   EventItem,
 } from '../types/veloztix';
 import { EventPosterArt } from '../components/EventPosterArt';
-import { sanitizeTextInput } from '../utils/security';
+import { sanitizeEventTextInput } from '../utils/security';
 
 interface CatalogViewProps {
   events: EventItem[];
@@ -89,7 +89,8 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
 
               <div className="p-6 sm:p-8">
                 <p className="text-xs font-semibold uppercase tracking-wider text-emerald-400">
-                  Presentado por {selectedEvent.organizerName} ({selectedEvent.instagramHandle})
+                  Presentado por {selectedEvent.organizerName} (
+                  {selectedEvent.instagramHandle})
                 </p>
                 <h1 className="mt-2 text-2xl font-extrabold tracking-tight text-white sm:text-3xl">
                   {selectedEvent.title}
@@ -172,7 +173,10 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
                     ${selectedEvent.priceUsd.toFixed(2)}
                   </span>
                   <span className="text-xs font-medium text-zinc-400">
-                    Bs. {selectedEvent.priceBs.toLocaleString('es-VE', { minimumFractionDigits: 2 })}
+                    Bs.{' '}
+                    {selectedEvent.priceBs.toLocaleString('es-VE', {
+                      minimumFractionDigits: 2,
+                    })}
                   </span>
                 </div>
               </div>
@@ -234,13 +238,17 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
                   </span>
                 </div>
                 <div className="flex justify-between gap-3 text-sm text-zinc-400">
-                  <span>Tarifa de servicio VelozTix: 4.5% + $0.20 por entrada</span>
+                  <span>
+                    Tarifa de servicio VelozTix: 4.5% + $0.20 por entrada
+                  </span>
                   <span className="shrink-0 font-medium text-zinc-200">
                     ${pricing.totalCommissionUsd.toFixed(2)}
                   </span>
                 </div>
                 <div className="flex items-baseline justify-between border-t border-zinc-800 pt-3">
-                  <span className="text-base font-bold text-white">Total a pagar</span>
+                  <span className="text-base font-bold text-white">
+                    Total a pagar
+                  </span>
                   <div className="text-right">
                     <span className="block text-xl font-extrabold text-emerald-400">
                       Bs.{' '}
@@ -267,7 +275,8 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
               </button>
 
               <p className="mt-3 text-center text-xs text-zinc-500">
-                Tarifa de servicio VelozTix: 4.5% + $0.20 por entrada · Pago Móvil instantáneo
+                Tarifa de servicio VelozTix: 4.5% + $0.20 por entrada · Pago
+                Móvil instantáneo
               </p>
             </div>
           </div>
@@ -321,8 +330,9 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
             </span>
           </h1>
           <p className="mt-2.5 text-sm leading-relaxed text-zinc-300 sm:text-base">
-            Reserva tu cupo desde Instagram o la web, paga con Pago Móvil mediante QR
-            dinámico y presenta tu entrada digital directo en puerta.
+            Reserva tu cupo desde Instagram o la web, paga con Pago Móvil
+            mediante QR dinámico y presenta tu entrada digital directo en
+            puerta.
           </p>
         </div>
 
@@ -349,9 +359,10 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
             <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
             <input
               type="text"
+              maxLength={60}
               value={searchQuery}
               onChange={(e) =>
-                setSearchQuery(sanitizeTextInput(e.target.value, 80))
+                setSearchQuery(sanitizeEventTextInput(e.target.value, 60))
               }
               placeholder="Buscar evento o lugar..."
               className="w-full rounded-xl border border-zinc-800 bg-zinc-950/90 py-2 pl-10 pr-4 text-sm text-white placeholder-zinc-500 focus:border-violet-500 focus:outline-none"

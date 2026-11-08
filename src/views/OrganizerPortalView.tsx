@@ -35,9 +35,19 @@ import {
 } from '../services/apiClient';
 import { EventPosterArt } from '../components/EventPosterArt';
 import {
+  formatIsoDateToSpanishLabel,
+  formatTimeRangeToLabel,
+  getTodayIsoDate,
+  isValidDecimalPrice,
+  isValidEventText,
+  isValidIntegerCapacity,
+  isValidIsoDate,
+  isValidTime24h,
   SAFE_EXTERNAL_LINK_PROPS,
+  sanitizeDecimalPriceInput,
+  sanitizeEventTextInput,
+  sanitizeIntegerInput,
   sanitizeOrganizerEventInput,
-  sanitizeTextInput,
 } from '../utils/security';
 
 interface OrganizerPortalViewProps {
@@ -50,6 +60,18 @@ interface OrganizerPortalViewProps {
   onCancelOrderManually: (orderId: string) => void;
   onExecuteReconciliation: () => Promise<void>;
   onPreviewEventAsBuyer: (event: EventItem) => void;
+}
+
+interface NewEventDraftState {
+  title: string;
+  category: EventCategory;
+  eventDateIso: string;
+  startTime: string;
+  endTime: string;
+  venue: string;
+  priceInput: string;
+  capacityInput: string;
+  description: string;
 }
 
 export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
@@ -68,21 +90,27 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
     'all'
   );
 
-  // Modal: Crear Nuevo Evento
+  const todayIso = getTodayIsoDate();
+
+  // Modal: Crear Nuevo Evento (con entradas tipadas y restringidas por formato)
   const [isCreateModalOpen, setIsCreateModalOpen] = useState<boolean>(false);
-  const [newEventForm, setNewEventForm] = useState<CreateNewEventInput>({
+  const [createEventError, setCreateEventError] = useState<string | null>(null);
+  const [newEventDraft, setNewEventDraft] = useState<NewEventDraftState>({
     title: '',
     category: 'Música & Fiestas',
-    dateLabel: '',
-    timeLabel: '',
+    eventDateIso: todayIso,
+    startTime: '20:00',
+    endTime: '23:30',
     venue: '',
-    priceUsd: 10,
-    totalCapacity: 150,
+    priceInput: '10.00',
+    capacityInput: '150',
     description: '',
   });
 
   // Modal: Link / QR para Historias de Instagram
-  const [shareModalEvent, setShareModalEvent] = useState<EventItem | null>(null);
+  const [shareModalEvent, setShareModalEvent] = useState<EventItem | null>(
+    null
+  );
   const [copiedSlug, setCopiedSlug] = useState<string | null>(null);
 
   // Modal: Verificación Manual de Entrada en Puerta
@@ -101,19 +129,97 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
     window.setTimeout(() => setCopiedSlug(null), 2000);
   };
 
+  const isTitleValid = isValidEventText(newEventDraft.title, 4);
+  const isVenueValid = isValidEventText(newEventDraft.venue, 4);
+  const isDateValid = isValidIsoDate(newEventDraft.eventDateIso, todayIso);
+  const isTimeValid =
+    isValidTime24h(newEventDraft.startTime) &&
+    isValidTime24h(newEventDraft.endTime);
+  const isPriceValid = isValidDecimalPrice(newEventDraft.priceInput, 1, 10000);
+  const isCapacityValid = isValidIntegerCapacity(
+    newEventDraft.capacityInput,
+    10,
+    5000
+  );
+  const isDescriptionValid = isValidEventText(newEventDraft.description, 10);
+
+  const isCreateEventFormValid =
+    isTitleValid &&
+    isVenueValid &&
+    isDateValid &&
+    isTimeValid &&
+    isPriceValid &&
+    isCapacityValid &&
+    isDescriptionValid;
+
   const handleCreateEventSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const sanitized = sanitizeOrganizerEventInput(newEventForm);
-    if (!sanitized.title || !sanitized.venue) return;
+    if (!isTitleValid) {
+      setCreateEventError(
+        'El nombre del evento debe tener al menos 4 caracteres e incluir letras válidas.'
+      );
+      return;
+    }
+    if (!isVenueValid) {
+      setCreateEventError(
+        'El lugar del evento debe tener al menos 4 caracteres e incluir letras válidas.'
+      );
+      return;
+    }
+    if (!isDateValid) {
+      setCreateEventError(
+        'Selecciona una fecha válida en formato calendario (igual o posterior a hoy).'
+      );
+      return;
+    }
+    if (!isTimeValid) {
+      setCreateEventError('Selecciona un horario de inicio y cierre válido.');
+      return;
+    }
+    if (!isPriceValid) {
+      setCreateEventError(
+        'El precio debe ser un monto decimal válido entre $1.00 y $10,000.00 USD.'
+      );
+      return;
+    }
+    if (!isCapacityValid) {
+      setCreateEventError(
+        'El número de participantes (cupos) debe ser un número entero entre 10 y 5000.'
+      );
+      return;
+    }
+    if (!isDescriptionValid) {
+      setCreateEventError(
+        'La descripción debe tener al menos 10 caracteres explicativos.'
+      );
+      return;
+    }
+
+    const sanitized = sanitizeOrganizerEventInput({
+      title: newEventDraft.title,
+      category: newEventDraft.category,
+      dateLabel: formatIsoDateToSpanishLabel(newEventDraft.eventDateIso),
+      timeLabel: formatTimeRangeToLabel(
+        newEventDraft.startTime,
+        newEventDraft.endTime
+      ),
+      venue: newEventDraft.venue,
+      priceUsd: Number(Number(newEventDraft.priceInput).toFixed(2)),
+      totalCapacity: parseInt(newEventDraft.capacityInput, 10),
+      description: newEventDraft.description,
+    });
+
     onCreateEvent(sanitized);
-    setNewEventForm({
+    setCreateEventError(null);
+    setNewEventDraft({
       title: '',
       category: 'Música & Fiestas',
-      dateLabel: '',
-      timeLabel: '',
+      eventDateIso: todayIso,
+      startTime: '20:00',
+      endTime: '23:30',
       venue: '',
-      priceUsd: 10,
-      totalCapacity: 150,
+      priceInput: '10.00',
+      capacityInput: '150',
       description: '',
     });
     setIsCreateModalOpen(false);
@@ -170,7 +276,8 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
             </span>
             <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-300">
               <Sparkles className="h-3 w-3" />
-              Suscripción SaaS Pro Activa · Comisión VelozTix (4.5% + $0.20/ticket)
+              Suscripción SaaS Pro Activa · Comisión VelozTix (4.5% +
+              $0.20/ticket)
             </span>
           </div>
           <h1 className="mt-1.5 text-2xl font-extrabold text-white sm:text-3xl">
@@ -184,7 +291,10 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
 
         <button
           type="button"
-          onClick={() => setIsCreateModalOpen(true)}
+          onClick={() => {
+            setCreateEventError(null);
+            setIsCreateModalOpen(true);
+          }}
           className="inline-flex items-center gap-2 rounded-2xl bg-gradient-to-r from-violet-600 to-emerald-500 px-5 py-3 text-sm font-bold text-white shadow-lg shadow-violet-600/25 transition hover:brightness-110"
         >
           <Plus className="h-4 w-4" />
@@ -395,8 +505,8 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
                 Compras y Órdenes Recientes
               </h2>
               <p className="text-xs text-zinc-400">
-                Aquí aparecen al instante las órdenes generadas desde la vista del
-                comprador.
+                Aquí aparecen al instante las órdenes generadas desde la vista
+                del comprador.
               </p>
             </div>
 
@@ -543,7 +653,9 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
                   minimumFractionDigits: 2,
                   maximumFractionDigits: 2,
                 })}{' '}
-                · Monto bruto entradas: ${reconciliation.subtotalTicketsUsd.toFixed(2)} ({reconciliation.reconciledTicketsCount} tickets)
+                · Monto bruto entradas: $
+                {reconciliation.subtotalTicketsUsd.toFixed(2)} (
+                {reconciliation.reconciledTicketsCount} tickets)
               </p>
             </div>
 
@@ -556,7 +668,9 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
                 -${reconciliation.veloztixTotalCommissionUsd.toFixed(2)}
               </p>
               <p className="mt-1 text-xs text-zinc-400">
-                Esquema 4.5% + $0.20/ticket (${reconciliation.veloztixPercentageFeeUsd.toFixed(2)} + ${reconciliation.veloztixFlatFeeUsd.toFixed(2)})
+                Esquema 4.5% + $0.20/ticket ($
+                {reconciliation.veloztixPercentageFeeUsd.toFixed(2)} + $
+                {reconciliation.veloztixFlatFeeUsd.toFixed(2)})
               </p>
             </div>
 
@@ -569,7 +683,9 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
                 ${reconciliation.netOrganizerUsd.toFixed(2)}
               </p>
               <p className="mt-1 text-xs text-zinc-300">
-                Total Recaudado (${reconciliation.grossUsd.toFixed(2)}) − Comisión Total VelozTix (${reconciliation.veloztixTotalCommissionUsd.toFixed(2)})
+                Total Recaudado (${reconciliation.grossUsd.toFixed(2)}) −
+                Comisión Total VelozTix ($
+                {reconciliation.veloztixTotalCommissionUsd.toFixed(2)})
               </p>
             </div>
           </div>
@@ -605,17 +721,21 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
               <div className="mt-5 flex items-center gap-3 rounded-2xl border border-emerald-500/35 bg-emerald-500/10 px-4 py-3.5 text-sm text-emerald-200">
                 <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-400" />
                 <span>
-                  <strong>¡Cierre cuadrado al 100%!</strong> Todas las órdenes cobradas por
-                  Pago Móvil coinciden con las entradas emitidas aplicando la
-                  Comisión VelozTix (4.5% + $0.20/ticket).
+                  <strong>¡Cierre cuadrado al 100%!</strong> Todas las órdenes
+                  cobradas por Pago Móvil coinciden con las entradas emitidas
+                  aplicando la Comisión VelozTix (4.5% + $0.20/ticket).
                 </span>
               </div>
             ) : (
               <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-500/35 bg-amber-500/10 px-4 py-3.5 text-sm text-amber-200">
                 <span>
-                  Hay <strong>{reconciliation.pendingCount} pago recibido</strong> pendiente
-                  por emitir su entrada. Haz clic en <strong>Ejecutar Cuadre de Pagos</strong>{' '}
-                  para resolverlo automáticamente.
+                  Hay{' '}
+                  <strong>
+                    {reconciliation.pendingCount} pago recibido
+                  </strong>{' '}
+                  pendiente por emitir su entrada. Haz clic en{' '}
+                  <strong>Ejecutar Cuadre de Pagos</strong> para resolverlo
+                  automáticamente.
                 </span>
               </div>
             )}
@@ -628,9 +748,13 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
                     <th className="px-4 py-3.5">Orden</th>
                     <th className="px-4 py-3.5">Evento &amp; Comprador</th>
                     <th className="px-4 py-3.5">Total Recaudado</th>
-                    <th className="px-4 py-3.5">Comisión VelozTix (4.5% + $0.20/ticket)</th>
+                    <th className="px-4 py-3.5">
+                      Comisión VelozTix (4.5% + $0.20/ticket)
+                    </th>
                     <th className="px-4 py-3.5">Monto Neto a Liquidar</th>
-                    <th className="px-4 py-3.5 text-right">Estado del Cuadre</th>
+                    <th className="px-4 py-3.5 text-right">
+                      Estado del Cuadre
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-800/80">
@@ -645,7 +769,9 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
                         </span>
                       </td>
                       <td className="px-4 py-3.5">
-                        <p className="font-semibold text-white">{row.eventTitle}</p>
+                        <p className="font-semibold text-white">
+                          {row.eventTitle}
+                        </p>
                         <p className="text-xs text-zinc-400">
                           {row.buyerDisplay} · {row.quantity}{' '}
                           {row.quantity === 1 ? 'entrada' : 'entradas'} ($
@@ -665,7 +791,8 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
                           -${row.veloztixCommissionUsd.toFixed(2)}
                         </span>
                         <span className="text-[11px] text-zinc-400">
-                          ${row.percentageFeeUsd.toFixed(2)} + ${row.flatFeeUsd.toFixed(2)}
+                          ${row.percentageFeeUsd.toFixed(2)} + $
+                          {row.flatFeeUsd.toFixed(2)}
                         </span>
                       </td>
                       <td className="px-4 py-3.5 font-extrabold text-emerald-400">
@@ -712,8 +839,8 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
                   Suscripción Organizadora VelozTix Pro (SaaS Activo)
                 </h2>
                 <p className="mt-0.5 text-xs text-zinc-300">
-                  Accede a inteligencia de audiencia en vivo y protección anti-reventa
-                  bajo nuestro esquema de comisión mixta:{' '}
+                  Accede a inteligencia de audiencia en vivo y protección
+                  anti-reventa bajo nuestro esquema de comisión mixta:{' '}
                   <strong className="text-emerald-400">
                     4.5% + $0.20 USD por entrada
                   </strong>
@@ -788,8 +915,8 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
                 ¿Cómo compran tus asistentes?
               </h3>
               <p className="mt-1 text-xs text-zinc-400">
-                Inteligencia comercial de VelozTix Pro para ayudarte a vender todo tu
-                aforo más rápido.
+                Inteligencia comercial de VelozTix Pro para ayudarte a vender
+                todo tu aforo más rápido.
               </p>
 
               <div className="mt-6 space-y-5">
@@ -809,14 +936,16 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
                     />
                   </div>
                   <p className="mt-1.5 text-xs text-zinc-400">
-                    Abren tu link desde Instagram y completan el Pago Móvil de inmediato.
+                    Abren tu link desde Instagram y completan el Pago Móvil de
+                    inmediato.
                   </p>
                 </div>
 
                 <div>
                   <div className="flex justify-between text-sm">
                     <span className="font-semibold text-white">
-                      Compradores indecisos (comparan precio o consultan con amigos)
+                      Compradores indecisos (comparan precio o consultan con
+                      amigos)
                     </span>
                     <span className="font-bold text-violet-400">
                       {analytics.indecisiveBuyersPct}%
@@ -829,8 +958,8 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
                     />
                   </div>
                   <p className="mt-1.5 text-xs text-zinc-400">
-                    Revisan varias veces la página antes de decidir la cantidad de
-                    entradas.
+                    Revisan varias veces la página antes de decidir la cantidad
+                    de entradas.
                   </p>
                 </div>
               </div>
@@ -848,18 +977,20 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
 
                 <ul className="mt-4 space-y-3 text-sm text-zinc-300">
                   <li className="rounded-2xl border border-zinc-800 bg-zinc-950/70 p-3.5">
-                    <strong className="text-white">Horario estelar de compra:</strong> La
-                    mayoría de tus entradas se venden entre las{' '}
-                    <span className="text-emerald-400 font-semibold">
+                    <strong className="text-white">
+                      Horario estelar de compra:
+                    </strong>{' '}
+                    La mayoría de tus entradas se venden entre las{' '}
+                    <span className="font-semibold text-emerald-400">
                       7:30 PM y 10:00 PM
                     </span>
                     . Publica tus recordatorios de historia en esa franja.
                   </li>
                   <li className="rounded-2xl border border-zinc-800 bg-zinc-950/70 p-3.5">
                     <strong className="text-white">Impulso a grupos:</strong> El{' '}
-                    {analytics.indecisiveBuyersPct}% de tu audiencia pausa al elegir más
-                    de 2 entradas. Activar una promoción grupal 4x3 puede acelerar el
-                    sold-out.
+                    {analytics.indecisiveBuyersPct}% de tu audiencia pausa al
+                    elegir más de 2 entradas. Activar una promoción grupal 4x3
+                    puede acelerar el sold-out.
                   </li>
                 </ul>
               </div>
@@ -869,11 +1000,11 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
       )}
 
       {/* ===================================================================== */}
-      {/* MODAL: CREAR NUEVO EVENTO                                             */}
+      {/* MODAL: CREAR NUEVO EVENTO (CON RESTRICCIÓN Y VALIDACIÓN POR CAMPO)    */}
       {/* ===================================================================== */}
       {isCreateModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-lg rounded-3xl border border-zinc-800 bg-zinc-900 p-6 shadow-2xl sm:p-8">
+          <div className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-3xl border border-zinc-800 bg-zinc-900 p-6 shadow-2xl sm:p-8">
             <div className="flex items-center justify-between">
               <h2 className="text-xl font-extrabold text-white">
                 Publicar Nuevo Evento
@@ -887,165 +1018,289 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
               </button>
             </div>
 
-            <form onSubmit={handleCreateEventSubmit} className="mt-5 space-y-4">
+            {createEventError && (
+              <div className="mt-4 rounded-2xl border border-rose-500/40 bg-rose-950/50 p-3.5 text-xs text-rose-200">
+                {createEventError}
+              </div>
+            )}
+
+            <form
+              onSubmit={handleCreateEventSubmit}
+              noValidate
+              className="mt-5 space-y-4"
+            >
+              {/* Nombre del evento */}
               <div>
-                <label className="mb-1 block text-xs font-semibold text-zinc-300">
-                  Nombre del evento
-                </label>
+                <div className="mb-1 flex items-center justify-between">
+                  <label className="block text-xs font-semibold text-zinc-300">
+                    Nombre del evento
+                  </label>
+                  <span className="text-[11px] text-zinc-500">
+                    Mín. 4 caracteres (letras)
+                  </span>
+                </div>
                 <input
                   type="text"
                   required
+                  maxLength={90}
                   placeholder="Ej. Indie Acoustic Night UCAB"
-                  value={newEventForm.title}
-                  onChange={(e) =>
-                    setNewEventForm({
-                      ...newEventForm,
-                      title: sanitizeTextInput(e.target.value, 90),
-                    })
-                  }
-                  className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-2.5 text-sm text-white focus:border-violet-500 focus:outline-none"
+                  value={newEventDraft.title}
+                  onChange={(e) => {
+                    setCreateEventError(null);
+                    setNewEventDraft({
+                      ...newEventDraft,
+                      title: sanitizeEventTextInput(e.target.value, 90),
+                    });
+                  }}
+                  className={`w-full rounded-xl border bg-zinc-950 px-4 py-2.5 text-sm text-white focus:outline-none ${
+                    newEventDraft.title.length > 0 && !isTitleValid
+                      ? 'border-amber-500/60 focus:border-amber-400'
+                      : 'border-zinc-700 focus:border-violet-500'
+                  }`}
                 />
               </div>
 
+              {/* Categoría y Lugar */}
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-zinc-300">
                     Categoría
                   </label>
                   <select
-                    value={newEventForm.category}
+                    value={newEventDraft.category}
                     onChange={(e) =>
-                      setNewEventForm({
-                        ...newEventForm,
+                      setNewEventDraft({
+                        ...newEventDraft,
                         category: e.target.value as EventCategory,
                       })
                     }
                     className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-2.5 text-sm text-white focus:border-violet-500 focus:outline-none"
                   >
-                    <option value="Música & Fiestas">Música &amp; Fiestas</option>
+                    <option value="Música & Fiestas">
+                      Música &amp; Fiestas
+                    </option>
                     <option value="Gaming & Tech">Gaming &amp; Tech</option>
-                    <option value="Comedia & Cultura">Comedia &amp; Cultura</option>
+                    <option value="Comedia & Cultura">
+                      Comedia &amp; Cultura
+                    </option>
                   </select>
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-xs font-semibold text-zinc-300">
-                    Lugar
-                  </label>
+                  <div className="mb-1 flex items-center justify-between">
+                    <label className="block text-xs font-semibold text-zinc-300">
+                      Lugar
+                    </label>
+                    <span className="text-[11px] text-zinc-500">
+                      Ubicación / Recinto
+                    </span>
+                  </div>
                   <input
                     type="text"
                     required
+                    maxLength={90}
                     placeholder="Ej. Terraza Las Mercedes"
-                    value={newEventForm.venue}
-                    onChange={(e) =>
-                      setNewEventForm({
-                        ...newEventForm,
-                        venue: sanitizeTextInput(e.target.value, 90),
-                      })
-                    }
-                    className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-2.5 text-sm text-white focus:border-violet-500 focus:outline-none"
+                    value={newEventDraft.venue}
+                    onChange={(e) => {
+                      setCreateEventError(null);
+                      setNewEventDraft({
+                        ...newEventDraft,
+                        venue: sanitizeEventTextInput(e.target.value, 90),
+                      });
+                    }}
+                    className={`w-full rounded-xl border bg-zinc-950 px-4 py-2.5 text-sm text-white focus:outline-none ${
+                      newEventDraft.venue.length > 0 && !isVenueValid
+                        ? 'border-amber-500/60 focus:border-amber-400'
+                        : 'border-zinc-700 focus:border-violet-500'
+                    }`}
                   />
                 </div>
               </div>
 
+              {/* Fecha (Formato Fecha Calendario) y Horario (Formato Hora) */}
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
-                  <label className="mb-1 block text-xs font-semibold text-zinc-300">
-                    Fecha
-                  </label>
+                  <div className="mb-1 flex items-center justify-between">
+                    <label className="block text-xs font-semibold text-zinc-300">
+                      Fecha del evento
+                    </label>
+                    <span className="text-[11px] text-zinc-500">
+                      Formato fecha
+                    </span>
+                  </div>
                   <input
-                    type="text"
+                    type="date"
                     required
-                    placeholder="Ej. Viernes 18 de Diciembre"
-                    value={newEventForm.dateLabel}
-                    onChange={(e) =>
-                      setNewEventForm({
-                        ...newEventForm,
-                        dateLabel: sanitizeTextInput(e.target.value, 60),
-                      })
-                    }
-                    className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-2.5 text-sm text-white focus:border-violet-500 focus:outline-none"
+                    min={todayIso}
+                    value={newEventDraft.eventDateIso}
+                    onChange={(e) => {
+                      setCreateEventError(null);
+                      setNewEventDraft({
+                        ...newEventDraft,
+                        eventDateIso: e.target.value,
+                      });
+                    }}
+                    className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3.5 py-2.5 text-sm text-white [color-scheme:dark] focus:border-violet-500 focus:outline-none"
                   />
+                  {isDateValid && (
+                    <p className="mt-1 text-[11px] text-emerald-400">
+                      {formatIsoDateToSpanishLabel(newEventDraft.eventDateIso)}
+                    </p>
+                  )}
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-xs font-semibold text-zinc-300">
-                    Hora
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="Ej. 8:00 PM – 1:00 AM"
-                    value={newEventForm.timeLabel}
-                    onChange={(e) =>
-                      setNewEventForm({
-                        ...newEventForm,
-                        timeLabel: sanitizeTextInput(e.target.value, 50),
-                      })
-                    }
-                    className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-2.5 text-sm text-white focus:border-violet-500 focus:outline-none"
-                  />
+                  <div className="mb-1 flex items-center justify-between">
+                    <label className="block text-xs font-semibold text-zinc-300">
+                      Horario (Inicio – Fin)
+                    </label>
+                    <span className="text-[11px] text-zinc-500">
+                      Formato hora
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      type="time"
+                      aria-label="Hora de inicio"
+                      required
+                      value={newEventDraft.startTime}
+                      onChange={(e) => {
+                        setCreateEventError(null);
+                        setNewEventDraft({
+                          ...newEventDraft,
+                          startTime: e.target.value,
+                        });
+                      }}
+                      className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-2.5 py-2.5 text-xs text-white [color-scheme:dark] focus:border-violet-500 focus:outline-none"
+                    />
+                    <input
+                      type="time"
+                      aria-label="Hora de cierre"
+                      required
+                      value={newEventDraft.endTime}
+                      onChange={(e) => {
+                        setCreateEventError(null);
+                        setNewEventDraft({
+                          ...newEventDraft,
+                          endTime: e.target.value,
+                        });
+                      }}
+                      className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-2.5 py-2.5 text-xs text-white [color-scheme:dark] focus:border-violet-500 focus:outline-none"
+                    />
+                  </div>
+                  {isTimeValid && (
+                    <p className="mt-1 text-[11px] text-zinc-400">
+                      {formatTimeRangeToLabel(
+                        newEventDraft.startTime,
+                        newEventDraft.endTime
+                      )}
+                    </p>
+                  )}
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              {/* Precio Entrada (Decimal) y Número de Participantes / Cupos (Entero) */}
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
-                  <label className="mb-1 block text-xs font-semibold text-zinc-300">
-                    Precio Entrada (USD)
-                  </label>
+                  <div className="mb-1 flex items-center justify-between">
+                    <label className="block text-xs font-semibold text-zinc-300">
+                      Precio Entrada (USD)
+                    </label>
+                    <span className="text-[11px] text-zinc-500">
+                      Decimal (ej. 12.50)
+                    </span>
+                  </div>
                   <input
-                    type="number"
-                    min={1}
-                    step="0.5"
+                    type="text"
+                    inputMode="decimal"
                     required
-                    value={newEventForm.priceUsd}
-                    onChange={(e) =>
-                      setNewEventForm({
-                        ...newEventForm,
-                        priceUsd: Number(e.target.value),
-                      })
-                    }
-                    className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-2.5 text-sm text-white focus:border-violet-500 focus:outline-none"
+                    placeholder="10.00"
+                    value={newEventDraft.priceInput}
+                    onChange={(e) => {
+                      setCreateEventError(null);
+                      setNewEventDraft({
+                        ...newEventDraft,
+                        priceInput: sanitizeDecimalPriceInput(e.target.value),
+                      });
+                    }}
+                    className={`w-full rounded-xl border bg-zinc-950 px-4 py-2.5 text-sm text-white focus:outline-none ${
+                      newEventDraft.priceInput.length > 0 && !isPriceValid
+                        ? 'border-amber-500/60 focus:border-amber-400'
+                        : 'border-zinc-700 focus:border-violet-500'
+                    }`}
                   />
+                  {!isPriceValid && (
+                    <p className="mt-1 text-[11px] text-amber-400">
+                      Ingresa un decimal válido ($1.00 – $10,000.00).
+                    </p>
+                  )}
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-xs font-semibold text-zinc-300">
-                    Cupos Disponibles
-                  </label>
+                  <div className="mb-1 flex items-center justify-between">
+                    <label className="block text-xs font-semibold text-zinc-300">
+                      Número de participantes (Cupos)
+                    </label>
+                    <span className="text-[11px] text-zinc-500">
+                      Entero (10 – 5000)
+                    </span>
+                  </div>
                   <input
-                    type="number"
-                    min={10}
-                    max={1000}
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
                     required
-                    value={newEventForm.totalCapacity}
-                    onChange={(e) =>
-                      setNewEventForm({
-                        ...newEventForm,
-                        totalCapacity: Number(e.target.value),
-                      })
-                    }
-                    className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-2.5 text-sm text-white focus:border-violet-500 focus:outline-none"
+                    placeholder="150"
+                    value={newEventDraft.capacityInput}
+                    onChange={(e) => {
+                      setCreateEventError(null);
+                      setNewEventDraft({
+                        ...newEventDraft,
+                        capacityInput: sanitizeIntegerInput(e.target.value, 4),
+                      });
+                    }}
+                    className={`w-full rounded-xl border bg-zinc-950 px-4 py-2.5 text-sm text-white focus:outline-none ${
+                      newEventDraft.capacityInput.length > 0 && !isCapacityValid
+                        ? 'border-amber-500/60 focus:border-amber-400'
+                        : 'border-zinc-700 focus:border-violet-500'
+                    }`}
                   />
+                  {!isCapacityValid && (
+                    <p className="mt-1 text-[11px] text-amber-400">
+                      Solo números enteros entre 10 y 5000 (sin decimales).
+                    </p>
+                  )}
                 </div>
               </div>
 
+              {/* Descripción del evento */}
               <div>
-                <label className="mb-1 block text-xs font-semibold text-zinc-300">
-                  Descripción del evento
-                </label>
+                <div className="mb-1 flex items-center justify-between">
+                  <label className="block text-xs font-semibold text-zinc-300">
+                    Descripción del evento
+                  </label>
+                  <span className="text-[11px] text-zinc-500">
+                    Mín. 10 caracteres
+                  </span>
+                </div>
                 <textarea
                   rows={3}
                   required
+                  maxLength={350}
                   placeholder="Cuéntale a tus asistentes qué incluye la entrada..."
-                  value={newEventForm.description}
-                  onChange={(e) =>
-                    setNewEventForm({
-                      ...newEventForm,
-                      description: sanitizeTextInput(e.target.value, 350),
-                    })
-                  }
-                  className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-2.5 text-sm text-white focus:border-violet-500 focus:outline-none"
+                  value={newEventDraft.description}
+                  onChange={(e) => {
+                    setCreateEventError(null);
+                    setNewEventDraft({
+                      ...newEventDraft,
+                      description: sanitizeEventTextInput(e.target.value, 350),
+                    });
+                  }}
+                  className={`w-full rounded-xl border bg-zinc-950 px-4 py-2.5 text-sm text-white focus:outline-none ${
+                    newEventDraft.description.length > 0 && !isDescriptionValid
+                      ? 'border-amber-500/60 focus:border-amber-400'
+                      : 'border-zinc-700 focus:border-violet-500'
+                  }`}
                 />
               </div>
 
@@ -1059,7 +1314,8 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
                 </button>
                 <button
                   type="submit"
-                  className="rounded-xl bg-gradient-to-r from-violet-600 to-emerald-500 px-5 py-2.5 text-sm font-bold text-white shadow-lg"
+                  disabled={!isCreateEventFormValid}
+                  className="rounded-xl bg-gradient-to-r from-violet-600 to-emerald-500 px-5 py-2.5 text-sm font-bold text-white shadow-lg disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Publicar en Cartelera
                 </button>
@@ -1093,8 +1349,8 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
               {shareModalEvent.title}
             </h3>
             <p className="mt-1 text-xs text-zinc-400">
-              Comparte este código QR en tus historias o afiches para recibir compras
-              directas con Pago Móvil.
+              Comparte este código QR en tus historias o afiches para recibir
+              compras directas con Pago Móvil.
             </p>
 
             <div className="mx-auto mt-5 inline-block rounded-3xl bg-white p-4 shadow-xl">
@@ -1137,7 +1393,7 @@ export const OrganizerPortalView: React.FC<OrganizerPortalViewProps> = ({
               Orden #{verifiedOrderModal.id} · {verifiedOrderModal.eventTitle}
             </p>
 
-            <div className="mt-4 rounded-2xl border border-zinc-800 bg-zinc-950 p-4 text-left text-xs space-y-1.5">
+            <div className="mt-4 space-y-1.5 rounded-2xl border border-zinc-800 bg-zinc-950 p-4 text-left text-xs">
               <div className="flex justify-between">
                 <span className="text-zinc-400">Asistente:</span>
                 <span className="font-bold text-white">

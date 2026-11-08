@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import {
   ArrowLeft,
   Calendar,
@@ -6,7 +6,7 @@ import {
   Lock,
   MapPin,
   QrCode,
-  Smartphone,
+  Sparkles,
 } from 'lucide-react';
 import {
   BuyerCheckoutForm,
@@ -14,12 +14,14 @@ import {
   EventItem,
 } from '../types/veloztix';
 import { EventPosterArt } from '../components/EventPosterArt';
-import { maskCedula } from '../utils/privacyCrypto';
 import {
-  enforceZeroPersistentPiiStorage,
-  sanitizeDigitsInput,
+  isValidCedula,
+  isValidEmail,
+  isValidPersonName,
+  isValidPhoneDigits,
+  sanitizeDigitsOnly,
   sanitizeEmailInput,
-  sanitizeTextInput,
+  sanitizePersonNameInput,
 } from '../utils/security';
 
 interface BuyerCheckoutViewProps {
@@ -49,52 +51,63 @@ export const BuyerCheckoutView: React.FC<BuyerCheckoutViewProps> = ({
   isSubmitting,
   errorMessage,
 }) => {
-  const [validationError, setValidationError] = useState<string | null>(null);
-
-  useEffect(() => {
-    enforceZeroPersistentPiiStorage();
-    return () => {
-      enforceZeroPersistentPiiStorage();
-    };
-  }, []);
+  const [localValidationError, setLocalValidationError] = useState<
+    string | null
+  >(null);
 
   const pricing = calculateVelozTixPricing(event.priceUsd, quantity);
+  const subtotalUsd = pricing.subtotalUsd;
+  const serviceFeeUsd = pricing.totalCommissionUsd;
+  const totalUsd = pricing.totalUsd;
+  const totalBs = pricing.totalBs;
 
-  const maskedPreview = form.cedulaDigits
-    ? maskCedula(form.docPrefix, form.cedulaDigits)
-    : 'V-**.*45.892';
+  const isNameValid = isValidPersonName(form.fullName);
+  const isCedulaValid = isValidCedula(form.cedulaDigits);
+  const isPhoneValid = isValidPhoneDigits(form.phoneDigits);
+  const isEmailValid = isValidEmail(form.email);
+
+  const isFormValid =
+    isNameValid && isCedulaValid && isPhoneValid && isEmailValid;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (form.fullName.trim().length < 3) {
-      setValidationError('Por favor ingresa tu nombre y apellido.');
+    if (!isNameValid) {
+      setLocalValidationError(
+        'Ingresa tu nombre y apellido usando solo letras (ej. María Fernanda Gómez).'
+      );
       return;
     }
-    if (form.cedulaDigits.replace(/\D/g, '').length < 6) {
-      setValidationError('Ingresa un número de cédula válido.');
+    if (!isCedulaValid) {
+      setLocalValidationError(
+        'La cédula debe contener únicamente números enteros (entre 6 y 9 dígitos).'
+      );
       return;
     }
-    if (form.phoneDigits.replace(/\D/g, '').length !== 7) {
-      setValidationError('Ingresa los 7 dígitos de tu teléfono móvil.');
+    if (!isPhoneValid) {
+      setLocalValidationError(
+        'El teléfono debe contener exactamente 7 dígitos numéricos.'
+      );
       return;
     }
-    if (!form.email.includes('@') || !form.email.includes('.')) {
-      setValidationError('Ingresa un correo electrónico válido para recibir tu entrada.');
+    if (!isEmailValid) {
+      setLocalValidationError(
+        'Ingresa un correo electrónico válido (ejemplo: nombre@correo.com).'
+      );
       return;
     }
 
-    setValidationError(null);
+    setLocalValidationError(null);
     onGenerateOrder();
   };
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
-      {/* Navegación y Progreso Comercial */}
-      <div className="flex flex-wrap items-center justify-between gap-4">
+    <div className="mx-auto max-w-4xl space-y-6">
+      {/* Navegación superior */}
+      <div className="flex items-center justify-between">
         <button
           type="button"
           onClick={onBack}
-          className="inline-flex items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-900/80 px-4 py-2 text-sm font-medium text-zinc-300 transition hover:border-zinc-700 hover:text-white"
+          className="inline-flex items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-900/80 px-3.5 py-2 text-xs font-semibold text-zinc-300 transition hover:border-zinc-700 hover:text-white"
         >
           <ArrowLeft className="h-4 w-4" />
           <span>Volver al evento</span>
@@ -102,73 +115,101 @@ export const BuyerCheckoutView: React.FC<BuyerCheckoutViewProps> = ({
 
         <div className="flex items-center gap-2 text-xs font-semibold">
           <span className="rounded-full bg-violet-600 px-3 py-1 text-white">
-            Paso 1: Datos del Asistente
+            Paso 1 de 3: Datos del Asistente
           </span>
-          <span className="text-zinc-600">→</span>
-          <span className="rounded-full border border-zinc-800 bg-zinc-900 px-3 py-1 text-zinc-500">
-            Paso 2: Pago Móvil
-          </span>
-          <span className="text-zinc-600">→</span>
-          <span className="rounded-full border border-zinc-800 bg-zinc-900 px-3 py-1 text-zinc-500">
-            Paso 3: Tu Entrada
+          <span className="hidden text-zinc-500 sm:inline">→</span>
+          <span className="hidden rounded-full border border-zinc-800 bg-zinc-900 px-3 py-1 text-zinc-400 sm:inline">
+            Paso 2: Pago Móvil QR
           </span>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-8 lg:grid-cols-12">
-        {/* Formulario Principal (7 columnas) */}
-        <form onSubmit={handleSubmit} className="space-y-6 lg:col-span-7">
-          <div className="rounded-3xl border border-zinc-800 bg-zinc-900/90 p-6 sm:p-8 shadow-xl">
-            <h1 className="text-2xl font-extrabold text-white">
-              Datos del Asistente
-            </h1>
-            <p className="mt-1 text-sm text-zinc-400">
-              Completa tus datos para reservar tus entradas y recibir tu código de acceso.
-            </p>
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+        {/* Columna Izquierda: Formulario Comercial Limpio con Validación Estricta */}
+        <div className="lg:col-span-7">
+          <div className="rounded-3xl border border-zinc-800 bg-zinc-900/90 p-6 shadow-xl sm:p-8">
+            <div className="mb-6">
+              <h1 className="text-xl font-extrabold text-white sm:text-2xl">
+                ¿A nombre de quién emitimos las entradas?
+              </h1>
+              <p className="mt-1 text-sm text-zinc-400">
+                Enviaremos tus pases QR digitales de acceso inmediatamente tras
+                confirmar tu Pago Móvil.
+              </p>
+            </div>
 
-            {(validationError || errorMessage) && (
-              <div className="mt-4 rounded-2xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
-                {validationError || errorMessage}
+            {(errorMessage || localValidationError) && (
+              <div className="mb-5 rounded-2xl border border-rose-500/40 bg-rose-950/50 p-4 text-sm text-rose-200">
+                {localValidationError || errorMessage}
               </div>
             )}
 
-            <div className="mt-6 space-y-4">
-              {/* Nombre y Apellido */}
+            <form
+              onSubmit={handleSubmit}
+              onFocusCapture={onFieldFocus}
+              onKeyDownCapture={(e) => onFieldKeyDown(e.key)}
+              onPasteCapture={onFieldPaste}
+              autoComplete="off"
+              noValidate
+              className="space-y-4"
+            >
+              {/* 1. Nombre y Apellido (Solo letras y espacios) */}
               <div>
-                <label
-                  htmlFor="buyer-name"
-                  className="mb-1.5 block text-sm font-semibold text-zinc-200"
-                >
-                  Nombre y apellido
-                </label>
+                <div className="mb-1.5 flex items-center justify-between">
+                  <label
+                    htmlFor="buyer-name"
+                    className="block text-xs font-semibold text-zinc-300"
+                  >
+                    Nombre y apellido
+                  </label>
+                  <span className="text-[11px] text-zinc-500">
+                    Solo letras (nombre y apellido)
+                  </span>
+                </div>
                 <input
                   id="buyer-name"
                   type="text"
+                  inputMode="text"
+                  required
+                  maxLength={80}
                   autoComplete="off"
-                  placeholder="Ej. Valentina Morales"
+                  placeholder="Ej. María Fernanda Gómez"
                   value={form.fullName}
-                  onFocus={onFieldFocus}
-                  onKeyDown={(e) => onFieldKeyDown(e.key)}
-                  onPaste={onFieldPaste}
-                  onChange={(e) =>
+                  onChange={(e) => {
+                    setLocalValidationError(null);
                     onChangeForm({
                       ...form,
-                      fullName: sanitizeTextInput(e.target.value, 80),
-                    })
-                  }
-                  className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-sm text-white placeholder-zinc-500 transition focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500"
+                      fullName: sanitizePersonNameInput(e.target.value, 80),
+                    });
+                  }}
+                  className={`w-full rounded-xl border bg-zinc-950 px-4 py-3 text-sm text-white placeholder-zinc-500 focus:outline-none ${
+                    form.fullName.length > 0 && !isNameValid
+                      ? 'border-amber-500/60 focus:border-amber-400'
+                      : 'border-zinc-800 focus:border-violet-500'
+                  }`}
                 />
+                {form.fullName.length > 0 && !isNameValid && (
+                  <p className="mt-1 text-[11px] text-amber-400">
+                    Ingresa nombre y apellido usando únicamente letras (sin
+                    números ni caracteres especiales).
+                  </p>
+                )}
               </div>
 
-              {/* Cédula y Teléfono en fila */}
+              {/* 2. Cédula y 3. Teléfono (Solo números enteros) */}
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
-                  <label
-                    htmlFor="buyer-cedula"
-                    className="mb-1.5 block text-sm font-semibold text-zinc-200"
-                  >
-                    Cédula de identidad
-                  </label>
+                  <div className="mb-1.5 flex items-center justify-between">
+                    <label
+                      htmlFor="buyer-cedula"
+                      className="block text-xs font-semibold text-zinc-300"
+                    >
+                      Cédula de identidad
+                    </label>
+                    <span className="text-[11px] text-zinc-500">
+                      6 a 9 dígitos
+                    </span>
+                  </div>
                   <div className="flex gap-2">
                     <select
                       aria-label="Tipo de documento"
@@ -179,7 +220,7 @@ export const BuyerCheckoutView: React.FC<BuyerCheckoutViewProps> = ({
                           docPrefix: e.target.value as 'V' | 'E',
                         })
                       }
-                      className="rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-3 text-sm font-bold text-white focus:border-violet-500 focus:outline-none"
+                      className="rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-3 text-sm font-semibold text-white focus:border-violet-500 focus:outline-none"
                     >
                       <option value="V">V</option>
                       <option value="E">E</option>
@@ -188,41 +229,57 @@ export const BuyerCheckoutView: React.FC<BuyerCheckoutViewProps> = ({
                       id="buyer-cedula"
                       type="text"
                       inputMode="numeric"
+                      pattern="[0-9]{6,9}"
+                      required
+                      maxLength={9}
                       autoComplete="off"
                       placeholder="28445892"
                       value={form.cedulaDigits}
-                      onFocus={onFieldFocus}
-                      onKeyDown={(e) => onFieldKeyDown(e.key)}
-                      onPaste={onFieldPaste}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        setLocalValidationError(null);
                         onChangeForm({
                           ...form,
-                          cedulaDigits: sanitizeDigitsInput(e.target.value, 9),
-                        })
-                      }
-                      className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-sm text-white placeholder-zinc-500 transition focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500"
+                          cedulaDigits: sanitizeDigitsOnly(e.target.value, 9),
+                        });
+                      }}
+                      className={`w-full rounded-xl border bg-zinc-950 px-4 py-3 text-sm text-white placeholder-zinc-500 focus:outline-none ${
+                        form.cedulaDigits.length > 0 && !isCedulaValid
+                          ? 'border-amber-500/60 focus:border-amber-400'
+                          : 'border-zinc-800 focus:border-violet-500'
+                      }`}
                     />
                   </div>
+                  {form.cedulaDigits.length > 0 && !isCedulaValid && (
+                    <p className="mt-1 text-[11px] text-amber-400">
+                      Solo números enteros (entre 6 y 9 dígitos).
+                    </p>
+                  )}
                 </div>
 
                 <div>
-                  <label
-                    htmlFor="buyer-phone"
-                    className="mb-1.5 block text-sm font-semibold text-zinc-200"
-                  >
-                    Teléfono celular
-                  </label>
+                  <div className="mb-1.5 flex items-center justify-between">
+                    <label
+                      htmlFor="buyer-phone"
+                      className="block text-xs font-semibold text-zinc-300"
+                    >
+                      Teléfono celular
+                    </label>
+                    <span className="text-[11px] text-zinc-500">
+                      7 dígitos
+                    </span>
+                  </div>
                   <div className="flex gap-2">
                     <select
-                      aria-label="Código operadora"
+                      aria-label="Operadora telefónica"
                       value={form.phonePrefix}
                       onChange={(e) =>
                         onChangeForm({
                           ...form,
-                          phonePrefix: e.target.value as BuyerCheckoutForm['phonePrefix'],
+                          phonePrefix: e.target
+                            .value as BuyerCheckoutForm['phonePrefix'],
                         })
                       }
-                      className="rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-3 text-sm font-bold text-white focus:border-violet-500 focus:outline-none"
+                      className="rounded-xl border border-zinc-800 bg-zinc-950 px-2.5 py-3 text-sm font-semibold text-white focus:border-violet-500 focus:outline-none"
                     >
                       <option value="0414">0414</option>
                       <option value="0424">0424</option>
@@ -234,104 +291,121 @@ export const BuyerCheckoutView: React.FC<BuyerCheckoutViewProps> = ({
                       id="buyer-phone"
                       type="text"
                       inputMode="numeric"
+                      pattern="[0-9]{7}"
+                      required
+                      maxLength={7}
                       autoComplete="off"
                       placeholder="5524821"
                       value={form.phoneDigits}
-                      onFocus={onFieldFocus}
-                      onKeyDown={(e) => onFieldKeyDown(e.key)}
-                      onPaste={onFieldPaste}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        setLocalValidationError(null);
                         onChangeForm({
                           ...form,
-                          phoneDigits: sanitizeDigitsInput(e.target.value, 7),
-                        })
-                      }
-                      className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-sm text-white placeholder-zinc-500 transition focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500"
+                          phoneDigits: sanitizeDigitsOnly(e.target.value, 7),
+                        });
+                      }}
+                      className={`w-full rounded-xl border bg-zinc-950 px-4 py-3 text-sm text-white placeholder-zinc-500 focus:outline-none ${
+                        form.phoneDigits.length > 0 && !isPhoneValid
+                          ? 'border-amber-500/60 focus:border-amber-400'
+                          : 'border-zinc-800 focus:border-violet-500'
+                      }`}
                     />
+                  </div>
+                  {form.phoneDigits.length > 0 && !isPhoneValid && (
+                    <p className="mt-1 text-[11px] text-amber-400">
+                      Ingresa exactamente los 7 dígitos numéricos de tu celular.
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* 4. Correo Electrónico (Formato específico usuario@dominio.tld) */}
+              <div>
+                <div className="mb-1.5 flex items-center justify-between">
+                  <label
+                    htmlFor="buyer-email"
+                    className="block text-xs font-semibold text-zinc-300"
+                  >
+                    Correo electrónico (donde recibirás tus entradas)
+                  </label>
+                  <span className="text-[11px] text-zinc-500">
+                    usuario@dominio.com
+                  </span>
+                </div>
+                <input
+                  id="buyer-email"
+                  type="email"
+                  inputMode="email"
+                  required
+                  maxLength={100}
+                  autoComplete="off"
+                  placeholder="ejemplo@correo.com"
+                  value={form.email}
+                  onChange={(e) => {
+                    setLocalValidationError(null);
+                    onChangeForm({
+                      ...form,
+                      email: sanitizeEmailInput(e.target.value, 100),
+                    });
+                  }}
+                  className={`w-full rounded-xl border bg-zinc-950 px-4 py-3 text-sm text-white placeholder-zinc-500 focus:outline-none ${
+                    form.email.length > 0 && !isEmailValid
+                      ? 'border-amber-500/60 focus:border-amber-400'
+                      : 'border-zinc-800 focus:border-violet-500'
+                  }`}
+                />
+                {form.email.length > 0 && !isEmailValid && (
+                  <p className="mt-1 text-[11px] text-amber-400">
+                    Formato requerido: usuario@dominio.com (sin espacios ni
+                    caracteres inválidos).
+                  </p>
+                )}
+              </div>
+
+              {/* Aviso comercial de pago seguro con QR */}
+              <div className="rounded-2xl border border-zinc-800/90 bg-zinc-950/70 p-4">
+                <div className="flex items-start gap-3">
+                  <QrCode className="mt-0.5 h-5 w-5 shrink-0 text-emerald-400" />
+                  <div className="text-xs leading-relaxed text-zinc-300">
+                    <span className="font-semibold text-white">
+                      Pago Móvil con QR Dinámico:
+                    </span>{' '}
+                    En el siguiente paso verás el código QR y los datos bancarios
+                    para transferir desde tu banco de preferencia. Nunca te
+                    pediremos claves bancarias ni números de tarjeta.
                   </div>
                 </div>
               </div>
 
-              {/* Correo Electrónico */}
-              <div>
-                <label
-                  htmlFor="buyer-email"
-                  className="mb-1.5 block text-sm font-semibold text-zinc-200"
-                >
-                  Correo electrónico
-                </label>
-                <input
-                  id="buyer-email"
-                  type="email"
-                  autoComplete="off"
-                  placeholder="valentina@correo.com"
-                  value={form.email}
-                  onFocus={onFieldFocus}
-                  onKeyDown={(e) => onFieldKeyDown(e.key)}
-                  onPaste={onFieldPaste}
-                  onChange={(e) =>
-                    onChangeForm({
-                      ...form,
-                      email: sanitizeEmailInput(e.target.value, 100),
-                    })
-                  }
-                  className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-sm text-white placeholder-zinc-500 transition focus:border-violet-500 focus:outline-none focus:ring-1 focus:ring-violet-500"
-                />
-              </div>
-            </div>
-
-            {/* Mensaje sutil y comercial de confianza con candado */}
-            <div className="mt-5 flex items-center gap-3 rounded-2xl border border-emerald-500/20 bg-emerald-500/5 px-4 py-3 text-xs text-zinc-300">
-              <Lock className="h-4 w-4 shrink-0 text-emerald-400" />
-              <span>
-                Tus datos personales están protegidos y se enmascaran automáticamente
-                (Ej: <strong className="font-semibold text-emerald-300">{maskedPreview}</strong>).
-              </span>
-            </div>
+              <button
+                type="submit"
+                disabled={!isFormValid || isSubmitting}
+                className="flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-violet-600 to-emerald-500 px-6 py-4 text-base font-bold text-white shadow-lg shadow-violet-600/20 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {isSubmitting ? (
+                  <>
+                    <Sparkles className="h-5 w-5 animate-spin" />
+                    <span>Reservando tus entradas...</span>
+                  </>
+                ) : (
+                  <>
+                    <Lock className="h-4 w-4" />
+                    <span>Continuar al Pago Móvil (Generar QR)</span>
+                  </>
+                )}
+              </button>
+            </form>
           </div>
+        </div>
 
-          {/* Selección Comercial de Método de Pago */}
-          <div className="rounded-3xl border border-zinc-800 bg-zinc-900/90 p-6 sm:p-8 shadow-xl">
-            <h2 className="text-lg font-bold text-white">Método de pago</h2>
-
-            <div className="mt-4 flex items-center justify-between gap-4 rounded-2xl border-2 border-emerald-500/60 bg-zinc-950 p-4">
-              <div className="flex items-center gap-3.5">
-                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-emerald-500/15 text-emerald-400">
-                  <Smartphone className="h-6 w-6" />
-                </div>
-                <div>
-                  <p className="text-sm font-bold text-white">
-                    Pago Móvil Instantáneo (QR Dinámico)
-                  </p>
-                  <p className="mt-0.5 text-xs text-zinc-400">
-                    Escanea desde tu app bancaria o transfiere el monto exacto en Bolívares.
-                  </p>
-                </div>
-              </div>
-              <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-400" />
-            </div>
-
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="mt-6 flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-violet-600 to-emerald-500 px-6 py-4 text-base font-bold text-white shadow-lg shadow-violet-600/25 transition hover:brightness-110 disabled:opacity-60"
-            >
-              <QrCode className="h-5 w-5" />
-              <span>
-                {isSubmitting ? 'Reservando cupo...' : 'Generar Orden de Pago'}
-              </span>
-            </button>
-          </div>
-        </form>
-
-        {/* Resumen Lateral de la Compra (5 columnas) */}
+        {/* Columna Derecha: Resumen de Compra */}
         <div className="lg:col-span-5">
           <div className="sticky top-24 rounded-3xl border border-zinc-800 bg-zinc-900/90 p-6 shadow-xl">
-            <h3 className="text-sm font-bold uppercase tracking-wider text-zinc-400">
-              Resumen de compra
-            </h3>
+            <h2 className="text-sm font-bold uppercase tracking-wider text-zinc-400">
+              Resumen de tu compra
+            </h2>
 
-            <div className="mt-4 flex items-center gap-3.5">
+            <div className="mt-4 flex gap-3.5 border-b border-zinc-800 pb-4">
               <EventPosterArt
                 theme={event.posterTheme}
                 emoji={event.posterEmoji}
@@ -340,66 +414,65 @@ export const BuyerCheckoutView: React.FC<BuyerCheckoutViewProps> = ({
                 size="mini"
               />
               <div>
-                <h4 className="text-base font-bold text-white leading-snug">
+                <h3 className="text-base font-bold text-white">
                   {event.title}
-                </h4>
+                </h3>
                 <p className="mt-1 flex items-center gap-1.5 text-xs text-zinc-400">
                   <Calendar className="h-3.5 w-3.5 text-violet-400" />
                   <span>{event.dateLabel}</span>
                 </p>
                 <p className="mt-0.5 flex items-center gap-1.5 text-xs text-zinc-400">
                   <MapPin className="h-3.5 w-3.5 text-emerald-400" />
-                  <span>{event.venue}</span>
+                  <span className="line-clamp-1">{event.venue}</span>
                 </p>
               </div>
             </div>
 
-            <div className="mt-6 space-y-3 border-t border-zinc-800 pt-4 text-sm">
+            <div className="mt-4 space-y-2.5 text-sm">
               <div className="flex justify-between text-zinc-300">
                 <span>
-                  {quantity} × Entrada General (${event.priceUsd.toFixed(2)})
+                  {quantity}x Entrada General (${event.priceUsd.toFixed(2)} c/u)
                 </span>
                 <span className="font-semibold text-white">
-                  ${pricing.subtotalUsd.toFixed(2)}
+                  ${subtotalUsd.toFixed(2)}
                 </span>
               </div>
-
-              <div className="flex justify-between gap-3 text-zinc-300">
-                <span>Tarifa de servicio VelozTix: 4.5% + $0.20 por entrada</span>
-                <span className="shrink-0 font-semibold text-white">
-                  ${pricing.totalCommissionUsd.toFixed(2)}
-                </span>
-              </div>
-
               <div className="flex justify-between text-zinc-400">
-                <span>Entrega digital QR</span>
-                <span className="text-emerald-400 font-medium">Inmediata</span>
+                <span>
+                  Tarifa de servicio VelozTix: 4.5% + $0.20 por entrada
+                </span>
+                <span>${serviceFeeUsd.toFixed(2)}</span>
               </div>
-
-              <div className="flex items-baseline justify-between border-t border-zinc-800 pt-3">
-                <span className="text-base font-bold text-white">Total a pagar</span>
-                <div className="text-right">
-                  <span className="block text-2xl font-extrabold text-emerald-400">
-                    Bs.{' '}
-                    {pricing.totalBs.toLocaleString('es-VE', {
-                      minimumFractionDigits: 2,
-                      maximumFractionDigits: 2,
-                    })}
+              <div className="border-t border-zinc-800 pt-3">
+                <div className="flex items-baseline justify-between">
+                  <span className="text-sm font-bold text-white">
+                    Total a pagar
                   </span>
-                  <span className="text-xs text-zinc-400">
-                    Equivalente a ${pricing.totalUsd.toFixed(2)} USD
-                  </span>
+                  <div className="text-right">
+                    <span className="text-xl font-extrabold text-white">
+                      ${totalUsd.toFixed(2)} USD
+                    </span>
+                    <span className="block text-sm font-bold text-emerald-400">
+                      Bs.{' '}
+                      {totalBs.toLocaleString('es-VE', {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </span>
+                  </div>
                 </div>
               </div>
+            </div>
 
-              <p className="pt-1 text-xs leading-relaxed text-zinc-400">
-                Tarifa de servicio VelozTix:{' '}
-                <strong className="text-zinc-200">
-                  4.5% + $0.20 por entrada
-                </strong>{' '}
-                (${pricing.percentageFeeUsd.toFixed(2)} + $
-                {pricing.flatFeeUsd.toFixed(2)}).
-              </p>
+            <div className="mt-5 space-y-2 rounded-2xl bg-zinc-950/80 p-3.5 text-xs text-zinc-400">
+              <div className="flex items-center gap-2 text-zinc-300">
+                <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                <span>Cupos bloqueados por 5 minutos al generar el QR</span>
+              </div>
+              <div className="flex items-center gap-2 text-zinc-300">
+                <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                <span>Entrega inmediata de código QR de acceso</span>
+              </div>
             </div>
           </div>
         </div>
