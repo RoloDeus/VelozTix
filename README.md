@@ -92,7 +92,7 @@ El backend adopta un diseño limpio, modular e impulsado por inyección de depen
 * **`MERCHANTS`:** Comercios organizadores asociados, credenciales bancarias para Pago Móvil (banco, RIF enmascarado, teléfono enmascarado) y comisiones pactadas (4.5%).
 * **`ORDERS`:** Maestro de órdenes comerciales con trazabilidad ISO 8583 (DE11 STAN, DE37 RRN, DE38 Auth Code), estado transaccional (`AUTHORIZED`, `SETTLED`, `RECONCILED`, `REVERSED`, `REFUND_PENDING`) y referencia de pago bancario.
 * **`TICKETS`:** Boletos emitidos individualmente con UUID único, nonce aleatorio y token QR JWT firmado sin datos personales.
-* **`AUDIT_LEDGER`:** Libro contable inmutable para cumplimiento normativo (SUDEBAN Resoluciones 12441/12221), registrando cada transición (`AUTHORIZED`, `CAPTURED`, `REVERSED`, `RECONCILED`, `REVOKED`, `ANOMALY`).
+* **`AUDIT_LEDGER`:** Libro contable inmutable para cumplimiento normativo (SUDEBAN Resoluciones 641.10/001-21), registrando cada transición (`AUTHORIZED`, `CAPTURED`, `REVERSED`, `RECONCILED`, `REVOKED`, `ANOMALY`).
 * **`BUYERS_PII_VAULT`:** Bóveda aislada que almacena la cédula, teléfono y correo electrónico cifrados con `AES-256-GCM` bajo clave maestra criptográfica, indexada exclusivamente por `customer_hash`.
 
 ### Simulador de Redis en Memoria (`InMemoryRedisService`)

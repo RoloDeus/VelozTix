@@ -2,7 +2,7 @@ import { defineConfig, Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 
 /**
- * Cabeceras de Seguridad HTTP (AppSec Hardening - PCI-DSS 4.0, OWASP Top 10, SUDEBAN 12441/12221)
+ * Cabeceras de Seguridad HTTP (AppSec Hardening - PCI-DSS 4.0, OWASP Top 10, SUDEBAN 641.10/001-21)
  */
 export const SECURITY_HEADERS: Record<string, string> = {
   'Content-Security-Policy':

@@ -1,6 +1,6 @@
 /**
  * Módulo de Endurecimiento de Seguridad Client-Side (AppSec) y Validación Estricta de Entradas — VelozTix
- * Alineado con PCI-DSS 4.0 (Alcance Delegador), OWASP Top 10 y SUDEBAN 12441 / 12221.
+ * Alineado con PCI-DSS 4.0 (Alcance Delegador), OWASP Top 10 y SUDEBAN 641.10 / 001-21.
  */
 
 import { BuyerCheckoutForm, CreateNewEventInput } from '../types/veloztix';
@@ -12,7 +12,7 @@ export const SAFE_EXTERNAL_LINK_PROPS = {
 
 let sessionCorrelationId: string | null = null;
 const SESSION_SIGNING_SECRET =
-  'vt_appsec_ephemeral_hmac_key_2026_pci_dss_4_sudeban_12441';
+  'vt_appsec_ephemeral_hmac_key_2026_pci_dss_4_sudeban_641_10';
 
 const SENSITIVE_STORAGE_PATTERNS = [
   /cedula/i,
@@ -155,7 +155,7 @@ export async function sha256SubtleDigest(message: string): Promise<string> {
 }
 
 /**
- * Seudonimización irreversible en el cliente (Privacy by Design - SUDEBAN 12221):
+ * Seudonimización irreversible en el cliente (Privacy by Design - SUDEBAN 001-21):
  * Genera el `customer_hash` (SHA-256 con salt de dominio) sobre Cédula y Teléfono.
  */
 export async function generatePseudonymizedCustomerHash(

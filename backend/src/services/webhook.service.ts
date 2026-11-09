@@ -292,7 +292,7 @@ export class WebhookService {
       });
     }
 
-    // Insert into immutable AUDIT_LEDGER (SUDEBAN 12441/12221)
+    // Insert into immutable AUDIT_LEDGER (SUDEBAN 641.10/001-21)
     const auditTraceId = `aud_cap_${crypto.randomBytes(4).toString('hex')}`;
     this.auditRepo.insert({
       audit_trace_id: auditTraceId,

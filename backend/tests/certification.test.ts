@@ -189,7 +189,7 @@ describe('VelozTix - Matriz de Certificación Técnica (TC-01 a TC-10)', () => {
     assert.ok(!ticket.ticket_qr.includes('V-27999888'));
     assert.ok(!ticket.ticket_qr.includes('captura@ucab.edu.ve'));
 
-    // 6. Traza inmutable en AUDIT_LEDGER (SUDEBAN 12441/12221)
+    // 6. Traza inmutable en AUDIT_LEDGER (SUDEBAN 641.10/001-21)
     const auditLogs = container.auditRepo.findByOrderId(orderId);
     const captureAudit = auditLogs.find((a) => a.event_type === 'CAPTURED');
     assert.ok(captureAudit);

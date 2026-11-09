@@ -7,7 +7,7 @@ info:
     
     ### Lineamientos de Arquitectura y Cumplimiento:
     * **Rol Estricto de Mediador Comercial:** VelozTix no capta fondos ni procesa credenciales bancarias o claves C2P. Toda validación financiera es delegada a la pasarela/suiche externo (Caja Negra) mediante mensajería mapeada a **ISO 8583**.
-    * **Privacy by Design (PCI-DSS 4.0 Delegador & SUDEBAN 12441 / 12221):** Los datos identificatorios del comprador (PII) viajan bajo TLS 1.3, se cifran en reposo con AES-256 en la bóveda y se seudonimizan mediante `customer_hash` (SHA-256 con sal) antes de ser evaluados por el microservicio de IA.
+    * **Privacy by Design (PCI-DSS 4.0 Delegador & SUDEBAN 641.10 / 001-21):** Los datos identificatorios del comprador (PII) viajan bajo TLS 1.3, se cifran en reposo con AES-256 en la bóveda y se seudonimizan mediante `customer_hash` (SHA-256 con sal) antes de ser evaluados por el microservicio de IA.
     * **Idempotencia Transaccional:** Soporte nativo de `Idempotency-Key` en creación de órdenes y recepción de webhooks para evitar cobros duplicados, doble bloqueo de stock o múltiples emisiones de boletos.
   contact:
     name: Equipo A - Desarrollo de Software Fintech (UCAB)
@@ -123,7 +123,7 @@ paths:
         Endpoint receptor de notificaciones asíncronas enviadas por la Pasarela/Suiche de Pago Móvil cuando el comprador ejecuta el pago desde su aplicación bancaria (o cuando ocurre un rechazo externo).
         * Valida autenticidad mediante firma criptográfica `HMAC-SHA256(payload, secret)` en el header `X-Signature`.
         * Verifica idempotencia mediante `Idempotency-Key` (`X-Idempotency-Key`) y `payment_reference` (`DE37` RRN) para descartar reintentos duplicados.
-        * Si la orden está vigente (`HOLD` / `PENDING_PAYMENT`) y el monto en Bs coincide, asienta la transacción (`SETTLED` / `CAPTURED`), guarda la traza inmutable (SUDEBAN 12441/12221) y emite el boleto digital firmado (`HMAC/JWT`).
+        * Si la orden está vigente (`HOLD` / `PENDING_PAYMENT`) y el monto en Bs coincide, asienta la transacción (`SETTLED` / `CAPTURED`), guarda la traza inmutable (SUDEBAN 641.10/001-21) y emite el boleto digital firmado (`HMAC/JWT`).
       operationId: handlePagoMovilWebhook
       security:
         - WebhookSignatureAuth: []
@@ -484,7 +484,7 @@ components:
           example: "Orden rechazada por políticas de seguridad: se detectó patrón de automatización o acaparamiento de entradas (scalping)."
         audit_trace_id:
           type: string
-          description: Identificador de la traza de auditoría registrada según normativas SUDEBAN 12441 y 12221.
+          description: Identificador de la traza de auditoría registrada según normativas SUDEBAN 641.10 y 001-21.
           example: "aud_rej_7741290"
 
     OrderStatusResponse:
@@ -633,7 +633,7 @@ components:
           example: "tkt_vz_551209"
         audit_trace_id:
           type: string
-          description: Identificador de la traza inmutable insertada en el Ledger de Auditoría (SUDEBAN 12441 / 12221).
+          description: Identificador de la traza inmutable insertada en el Ledger de Auditoría (SUDEBAN 641.10 / 001-21).
           example: "aud_cap_9981234"
 
     ErrorResponse:

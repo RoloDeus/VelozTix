@@ -119,13 +119,13 @@ CREATE TABLE IF NOT EXISTS SETTLEMENT_REPORTS (
 CREATE TRIGGER IF NOT EXISTS trg_audit_ledger_no_update
 BEFORE UPDATE ON AUDIT_LEDGER
 BEGIN
-  SELECT RAISE(ABORT, 'AUDIT_LEDGER is immutable: updates prohibited by SUDEBAN 12441/12221');
+  SELECT RAISE(ABORT, 'AUDIT_LEDGER is immutable: updates prohibited by SUDEBAN 641.10/001-21');
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_audit_ledger_no_delete
 BEFORE DELETE ON AUDIT_LEDGER
 BEGIN
-  SELECT RAISE(ABORT, 'AUDIT_LEDGER is immutable: deletes prohibited by SUDEBAN 12441/12221');
+  SELECT RAISE(ABORT, 'AUDIT_LEDGER is immutable: deletes prohibited by SUDEBAN 641.10/001-21');
 END;
 
 -- Indexes for performance

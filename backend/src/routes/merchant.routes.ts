@@ -120,7 +120,7 @@ export function createMerchantRouter(
     }
   );
 
-  // GET /api/v1/audit - Consulta del Ledger de Auditoría (SUDEBAN 12441/12221)
+  // GET /api/v1/audit - Consulta del Ledger de Auditoría (SUDEBAN 641.10/001-21)
   router.get('/audit', (req: Request, res: Response, next: NextFunction) => {
     try {
       const logs = auditRepo.findAll();

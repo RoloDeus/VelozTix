@@ -273,7 +273,7 @@ export class OrderService {
       created_at: nowIso,
     });
 
-    // 9. Audit Trail (SUDEBAN 12441/12221)
+    // 9. Audit Trail (SUDEBAN 641.10/001-21)
     const auditTraceId = `aud_auth_${crypto.randomBytes(4).toString('hex')}`;
     this.auditRepo.insert({
       audit_trace_id: auditTraceId,

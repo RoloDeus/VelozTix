@@ -1,7 +1,7 @@
 # VelozTix — Evidencia de Endurecimiento de Seguridad Front-End (AppSec)
 
 **Proyecto:** VelozTix (Mediador Comercial de Boletería y Motor de Telemetría IA)  
-**Marcos de Referencia:** PCI-DSS 4.0 (Alcance Delegador), OWASP Top 10 (2021/2025) y Normativas SUDEBAN 12441 y 12221  
+**Marcos de Referencia:** PCI-DSS 4.0 (Alcance Delegador), OWASP Top 10 (2021/2025) y Normativas SUDEBAN 641.10 y 001-21  
 **Entrega:** Sesión 2 — Plan de Certificación y Blindaje Client-Side  
 
 ---
@@ -30,7 +30,7 @@ Toda petición transaccional saliente (`/api/v1/orders`, `/api/v1/webhooks/payme
 - **`X-Request-Timestamp`**: Marca de tiempo exacta en milisegundos (`Date.now()`) para validación de ventana temporal.
 - **`X-Nonce`**: Token aleatorio criptográfico de 128 bits de un solo uso (`crypto.getRandomValues`) para bloquear ataques de repetición (*Replay Attacks*).
 - **`X-Client-Signature`**: Firma criptográfica `HMAC-SHA256` calculada mediante **Web Crypto API** (`window.crypto.subtle.sign`) sobre `${timestamp}.${nonce}.${payloadJson}`. Garantiza la integridad del paquete para que un atacante no pueda alterar el precio de la entrada ni la comisión mixta (`4.5% + $0.20` por entrada) utilizando un proxy interceptor.
-- **`X-Correlation-ID`**: Identificador único de traza por sesión en memoria volátil (`corr_<uuid>`) para auditoría forense conforme a **SUDEBAN 12441 y 12221**, sin incluir ningún dato personal (PII) en las cabeceras.
+- **`X-Correlation-ID`**: Identificador único de traza por sesión en memoria volátil (`corr_<uuid>`) para auditoría forense conforme a **SUDEBAN 641.10 y 001-21**, sin incluir ningún dato personal (PII) en las cabeceras.
 
 ---
 
